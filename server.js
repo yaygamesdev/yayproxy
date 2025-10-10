@@ -7,23 +7,22 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Dynamic import for Puppeteer (for production vs local)
+// Determine environment and load appropriate Puppeteer
+const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
 let puppeteer;
 let chromium;
 
-async function initPuppeteer() {
-    if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
-        // Production: use puppeteer-core with chromium
+if (isProduction) {
+    puppeteer = require('puppeteer-core');
+    chromium = require('@sparticuz/chromium');
+    console.log('🚀 Running in PRODUCTION mode with @sparticuz/chromium');
+} else {
+    try {
+        puppeteer = require('puppeteer');
+        console.log('🔧 Running in DEVELOPMENT mode with puppeteer');
+    } catch (e) {
         puppeteer = require('puppeteer-core');
-        chromium = require('@sparticuz/chromium');
-    } else {
-        // Local: use regular puppeteer
-        try {
-            puppeteer = require('puppeteer');
-        } catch (e) {
-            // Fallback to puppeteer-core locally
-            puppeteer = require('puppeteer-core');
-        }
+        console.log('🔧 Running in DEVELOPMENT mode with puppeteer-core');
     }
 }
 
@@ -36,47 +35,69 @@ let browser = null;
 
 async function getBrowser() {
     if (!browser) {
-        // Try to find system Chrome
-        const chromePaths = [
-            '/usr/bin/google-chrome',
-            '/usr/bin/chromium-browser',
-            '/usr/bin/chromium',
-            '/snap/bin/chromium',
-            process.env.CHROME_PATH
-        ].filter(Boolean);
-
-        let executablePath;
-        const fs = require('fs');
-        for (const path of chromePaths) {
-            if (fs.existsSync(path)) {
-                executablePath = path;
-                console.log(`Found Chrome at: ${path}`);
-                break;
+        const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
+        
+        if (isProduction) {
+            // Production: use @sparticuz/chromium
+            console.log('🚀 Launching browser in production mode...');
+            try {
+                browser = await puppeteer.launch({
+                    args: chromium.args,
+                    defaultViewport: chromium.defaultViewport,
+                    executablePath: await chromium.executablePath(),
+                    headless: chromium.headless,
+                });
+                console.log('✅ Production browser launched successfully');
+            } catch (error) {
+                console.error('❌ Failed to launch production browser:', error.message);
+                throw error;
             }
-        }
+        } else {
+            // Local development
+            console.log('🔧 Launching browser in development mode...');
+            
+            // Try to find system Chrome
+            const chromePaths = [
+                '/usr/bin/google-chrome',
+                '/usr/bin/chromium-browser',
+                '/usr/bin/chromium',
+                '/snap/bin/chromium',
+                process.env.CHROME_PATH
+            ].filter(Boolean);
 
-        if (!executablePath) {
-            console.log('No system Chrome found, using bundled Chromium');
-        }
+            let executablePath;
+            const fs = require('fs');
+            for (const path of chromePaths) {
+                if (fs.existsSync(path)) {
+                    executablePath = path;
+                    console.log(`Found Chrome at: ${path}`);
+                    break;
+                }
+            }
 
-        try {
-            browser = await puppeteer.launch({
-                headless: 'new',
-                executablePath: executablePath, // Use system Chrome if found
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-gpu'
-                ]
-            });
-            console.log('✅ Browser launched successfully');
-        } catch (error) {
-            console.error('❌ Failed to launch browser:', error.message);
-            throw error;
+            if (!executablePath) {
+                console.log('No system Chrome found, using bundled Chromium');
+            }
+
+            try {
+                browser = await puppeteer.launch({
+                    headless: 'new',
+                    executablePath: executablePath,
+                    args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-accelerated-2d-canvas',
+                        '--no-first-run',
+                        '--no-zygote',
+                        '--disable-gpu'
+                    ]
+                });
+                console.log('✅ Development browser launched successfully');
+            } catch (error) {
+                console.error('❌ Failed to launch browser:', error.message);
+                throw error;
+            }
         }
     }
     return browser;
@@ -243,7 +264,8 @@ process.on('SIGINT', async () => {
     process.exit();
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+    await initPuppeteer();
     console.log(`Puppeteer proxy server running on http://localhost:${PORT}`);
     console.log(`Proxy endpoint: http://localhost:${PORT}/proxy?url=YOUR_URL`);
     console.log(`Screenshot mode: http://localhost:${PORT}/proxy?url=YOUR_URL&mode=screenshot`);
