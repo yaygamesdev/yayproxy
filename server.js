@@ -1,12 +1,31 @@
 // Puppeteer-based Proxy Server for JavaScript-heavy sites
-// Install: npm install express cors puppeteer
+// Install: npm install express cors node-fetch puppeteer-core @sparticuz/chromium
 
 const express = require('express');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Dynamic import for Puppeteer (for production vs local)
+let puppeteer;
+let chromium;
+
+async function initPuppeteer() {
+    if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+        // Production: use puppeteer-core with chromium
+        puppeteer = require('puppeteer-core');
+        chromium = require('@sparticuz/chromium');
+    } else {
+        // Local: use regular puppeteer
+        try {
+            puppeteer = require('puppeteer');
+        } catch (e) {
+            // Fallback to puppeteer-core locally
+            puppeteer = require('puppeteer-core');
+        }
+    }
+}
 
 // Enable CORS
 app.use(cors());
