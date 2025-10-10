@@ -265,7 +265,6 @@ process.on('SIGINT', async () => {
 });
 
 app.listen(PORT, async () => {
-    await initPuppeteer();
     console.log(`Puppeteer proxy server running on http://localhost:${PORT}`);
     console.log(`Proxy endpoint: http://localhost:${PORT}/proxy?url=YOUR_URL`);
     console.log(`Screenshot mode: http://localhost:${PORT}/proxy?url=YOUR_URL&mode=screenshot`);
