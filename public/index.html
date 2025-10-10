@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Proxy</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .url-bar {
+            display: flex;
+            gap: 10px;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            align-items: center;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 12px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            white-space: nowrap;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .content {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .proxy-frame {
+            flex: 1;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+            position: relative;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            gap: 20px;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee;
+            border: 2px solid #fcc;
+            border-radius: 8px;
+            padding: 20px;
+            color: #c33;
+            margin: 20px;
+            max-width: 600px;
+        }
+
+        .info {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 12px 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            font-size: 13px;
+            color: #1565c0;
+        }
+
+        .status {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .server-config {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .server-config input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+            width: 250px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="url-bar">
+                <div class="server-config">
+                    <label>Backend:</label>
+                    <input 
+                        type="text" 
+                        id="backendUrl" 
+                        value="http://localhost:3000"
+                        placeholder="http://localhost:3000"
+                    />
+                </div>
+                <input 
+                    type="text" 
+                    id="urlInput" 
+                    placeholder="Enter URL (e.g., https://example.com)"
+                    value="https://example.com"
+                />
+                <select id="modeSelect">
+                    <option value="html">HTML</option>
+                    <option value="screenshot">Screenshot</option>
+                    <option value="pdf">PDF</option>
+                </select>
+                <button onclick="loadPage()" id="goButton">Go</button>
+            </div>
+        </div>
+        <div class="content">
+            <div class="info">
+                <strong>🚀 Puppeteer Proxy Active!</strong> This proxy uses headless Chrome to render JavaScript-heavy sites. Choose mode: HTML (interactive), Screenshot (static image), or PDF (download).
+            </div>
+            <div class="proxy-frame">
+                <div class="loading-overlay hidden" id="loadingOverlay">
+                    <div class="spinner"></div>
+                    <div class="status" id="statusText">Loading...</div>
+                </div>
+                <iframe id="proxyIframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const urlInput = document.getElementById('urlInput');
+        const backendUrl = document.getElementById('backendUrl');
+        const modeSelect = document.getElementById('modeSelect');
+        const proxyIframe = document.getElementById('proxyIframe');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const statusText = document.getElementById('statusText');
+        const goButton = document.getElementById('goButton');
+
+        urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loadPage();
+            }
+        });
+
+        async function loadPage() {
+            let url = urlInput.value.trim();
+            
+            if (url && !url.match(/^https?:\/\//i)) {
+                url = 'https://' + url;
+            }
+
+            if (!url) {
+                alert('Please enter a valid URL');
+                return;
+            }
+
+            const backend = backendUrl.value.trim() || 'http://localhost:3000';
+            const mode = modeSelect.value;
+
+            loadingOverlay.classList.remove('hidden');
+            statusText.textContent = mode === 'html' ? 'Rendering page with Puppeteer...' : `Generating ${mode}...`;
+            goButton.disabled = true;
+
+            try {
+                const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=${mode}`;
+                
+                if (mode === 'screenshot') {
+                    // Display screenshot as image
+                    const img = document.createElement('img');
+                    img.src = proxyUrl;
+                    img.style.width = '100%';
+                    img.style.height = 'auto';
+                    img.onload = () => {
+                        loadingOverlay.classList.add('hidden');
+                        goButton.disabled = false;
+                    };
+                    img.onerror = () => {
+                        throw new Error('Failed to load screenshot');
+                    };
+                    
+                    proxyIframe.style.display = 'none';
+                    const container = document.querySelector('.proxy-frame');
+                    const existingImg = container.querySelector('img');
+                    if (existingImg) existingImg.remove();
+                    container.appendChild(img);
+                    
+                } else if (mode === 'pdf') {
+                    // Download PDF
+                    const link = document.createElement('a');
+                    link.href = proxyUrl;
+                    link.download = `proxy_${Date.now()}.pdf`;
+                    link.click();
+                    
+                    loadingOverlay.classList.add('hidden');
+                    goButton.disabled = false;
+                    alert('PDF download started!');
+                    
+                } else {
+                    // HTML mode - display in iframe
+                    proxyIframe.style.display = 'block';
+                    const existingImg = document.querySelector('.proxy-frame img');
+                    if (existingImg) existingImg.remove();
+                    
+                    const response = await fetch(proxyUrl);
+
+                    if (!response.ok) {
+                        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+                    }
+
+                    const html = await response.text();
+                    
+                    // Create a blob URL and load it in iframe
+                    const blob = new Blob([html], { type: 'text/html' });
+                    const blobUrl = URL.createObjectURL(blob);
+                    
+                    proxyIframe.src = blobUrl;
+                    
+                    setTimeout(() => {
+                        loadingOverlay.classList.add('hidden');
+                        goButton.disabled = false;
+                    }, 500);
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                loadingOverlay.innerHTML = `
+                    <div class="error">
+                        <strong>❌ Failed to load page</strong><br><br>
+                        <strong>Error:</strong> ${error.message}<br><br>
+                        <strong>Troubleshooting:</strong><br>
+                        • Make sure your backend server is running<br>
+                        • Check the backend URL: <code>${backend}</code><br>
+                        • Puppeteer may need more time for complex sites<br>
+                        • Some sites may still block automated browsers
+                    </div>
+                `;
+                goButton.disabled = false;
+            }
+        }
+
+        // Test backend connection on load
+        window.addEventListener('load', async () => {
+            const backend = backendUrl.value.trim();
+            try {
+                const response = await fetch(`${backend}/health`);
+                if (response.ok) {
+                    console.log('✅ Puppeteer backend server is reachable');
+                }
+            } catch (error) {
+                console.warn('⚠️ Backend server not reachable:', error.message);
+            }
+        });
+    </script>
+</body>
+</html>
