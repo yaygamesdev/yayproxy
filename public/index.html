@@ -82,6 +82,15 @@
             transform: none;
         }
 
+        select {
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }
+
         .content {
             flex: 1;
             padding: 20px;
@@ -147,21 +156,6 @@
             max-width: 600px;
         }
 
-        .retry-btn {
-            margin-top: 15px;
-            padding: 8px 20px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-
-        .retry-btn:hover {
-            background: #5568d3;
-        }
-
         .info {
             background: #e3f2fd;
             border-left: 4px solid #2196f3;
@@ -170,28 +164,6 @@
             border-radius: 4px;
             font-size: 13px;
             color: #1565c0;
-        }
-
-        .quick-links {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 8px;
-        }
-
-        .quick-link {
-            padding: 4px 10px;
-            background: rgba(102, 126, 234, 0.1);
-            border: 1px solid rgba(102, 126, 234, 0.3);
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .quick-link:hover {
-            background: rgba(102, 126, 234, 0.2);
-            border-color: rgba(102, 126, 234, 0.5);
         }
 
         .status {
@@ -236,6 +208,43 @@
             font-size: 13px;
             width: 250px;
         }
+
+        .quick-links {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .quick-link {
+            padding: 4px 10px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-link:hover {
+            background: rgba(102, 126, 234, 0.2);
+            border-color: rgba(102, 126, 234, 0.5);
+        }
+
+        .retry-btn {
+            margin-top: 15px;
+            padding: 8px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .retry-btn:hover {
+            background: #5568d3;
+        }
     </style>
 </head>
 <body>
@@ -274,6 +283,9 @@
                 <div class="loading-overlay hidden" id="loadingOverlay">
                     <div class="spinner"></div>
                     <div class="status" id="statusText">Loading...</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
                 </div>
                 <iframe id="proxyIframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
             </div>
@@ -362,24 +374,26 @@
             goButton.disabled = true;
 
             // Update status after 3 seconds
-            setTimeout(() => {
-                if (!goButton.disabled) return;
-                statusText.textContent = mode === 'html' ? 'Loading page...' : `Rendering ${mode}...`;
+            const timeout1 = setTimeout(() => {
+                if (goButton.disabled) {
+                    statusText.textContent = mode === 'html' ? 'Loading page...' : `Rendering ${mode}...`;
+                }
             }, 3000);
 
             // Update status after 10 seconds
-            setTimeout(() => {
-                if (!goButton.disabled) return;
-                statusText.textContent = 'This is taking a while...';
+            const timeout2 = setTimeout(() => {
+                if (goButton.disabled) {
+                    statusText.textContent = 'This is taking a while...';
+                }
             }, 10000);
 
             // Update status after 30 seconds
-            setTimeout(() => {
-                if (!goButton.disabled) return;
-                statusText.textContent = 'Almost there... (site may be slow)';
+            const timeout3 = setTimeout(() => {
+                if (goButton.disabled) {
+                    statusText.textContent = 'Almost there... (site may be slow)';
+                }
             }, 30000);
 
-            try {
             try {
                 const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=${mode}`;
                 
@@ -390,6 +404,9 @@
                     img.style.width = '100%';
                     img.style.height = 'auto';
                     img.onload = () => {
+                        clearTimeout(timeout1);
+                        clearTimeout(timeout2);
+                        clearTimeout(timeout3);
                         loadingOverlay.classList.add('hidden');
                         goButton.disabled = false;
                     };
@@ -410,6 +427,9 @@
                     link.download = `proxy_${Date.now()}.pdf`;
                     link.click();
                     
+                    clearTimeout(timeout1);
+                    clearTimeout(timeout2);
+                    clearTimeout(timeout3);
                     loadingOverlay.classList.add('hidden');
                     goButton.disabled = false;
                     alert('PDF download started!');
@@ -435,6 +455,9 @@
                     proxyIframe.src = blobUrl;
                     
                     setTimeout(() => {
+                        clearTimeout(timeout1);
+                        clearTimeout(timeout2);
+                        clearTimeout(timeout3);
                         loadingOverlay.classList.add('hidden');
                         goButton.disabled = false;
                         
@@ -450,6 +473,9 @@
 
             } catch (error) {
                 console.error('Error:', error);
+                clearTimeout(timeout1);
+                clearTimeout(timeout2);
+                clearTimeout(timeout3);
                 loadingOverlay.innerHTML = `
                     <div class="error">
                         <strong>❌ Failed to load page</strong><br><br>
