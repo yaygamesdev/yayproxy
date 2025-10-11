@@ -147,6 +147,21 @@
             max-width: 600px;
         }
 
+        .retry-btn {
+            margin-top: 15px;
+            padding: 8px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .retry-btn:hover {
+            background: #5568d3;
+        }
+
         .info {
             background: #e3f2fd;
             border-left: 4px solid #2196f3;
@@ -157,9 +172,53 @@
             color: #1565c0;
         }
 
+        .quick-links {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .quick-link {
+            padding: 4px 10px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-link:hover {
+            background: rgba(102, 126, 234, 0.2);
+            border-color: rgba(102, 126, 234, 0.5);
+        }
+
         .status {
             color: #666;
             font-size: 14px;
+            text-align: center;
+        }
+
+        .progress-bar {
+            width: 300px;
+            height: 4px;
+            background: #e0e0e0;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            animation: progress 60s linear;
+        }
+
+        @keyframes progress {
+            0% { width: 0%; }
+            100% { width: 100%; }
         }
 
         .server-config {
@@ -209,6 +268,7 @@
         <div class="content">
             <div class="info">
                 <strong>🚀 Puppeteer Proxy Active!</strong> This proxy uses headless Chrome to render JavaScript-heavy sites. Choose mode: HTML (interactive), Screenshot (static image), or PDF (download).
+                <div class="quick-links" id="quickLinks"></div>
             </div>
             <div class="proxy-frame">
                 <div class="loading-overlay hidden" id="loadingOverlay">
@@ -228,10 +288,57 @@
         const loadingOverlay = document.getElementById('loadingOverlay');
         const statusText = document.getElementById('statusText');
         const goButton = document.getElementById('goButton');
+        const quickLinksContainer = document.getElementById('quickLinks');
+
+        // Popular sites
+        const popularSites = [
+            'https://example.com',
+            'https://news.ycombinator.com',
+            'https://wikipedia.org',
+            'https://github.com',
+        ];
+
+        // Load history
+        let history = [];
+        try {
+            const saved = window.history_cache || [];
+            history = saved;
+        } catch (e) {}
+
+        // Render quick links
+        function renderQuickLinks() {
+            const sites = history.length > 0 ? history.slice(-4).reverse() : popularSites;
+            quickLinksContainer.innerHTML = sites.map(url => {
+                const domain = new URL(url).hostname.replace('www.', '');
+                return `<div class="quick-link" onclick="loadQuickSite('${url}')">${domain}</div>`;
+            }).join('');
+        }
+
+        window.loadQuickSite = function(url) {
+            urlInput.value = url;
+            loadPage();
+        };
+
+        renderQuickLinks();
 
         urlInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 loadPage();
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Ctrl/Cmd + K to focus URL bar
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                urlInput.focus();
+                urlInput.select();
+            }
+            // Escape to stop loading
+            if (e.key === 'Escape' && !goButton.disabled) {
+                goButton.disabled = false;
+                loadingOverlay.classList.add('hidden');
             }
         });
 
@@ -251,9 +358,28 @@
             const mode = modeSelect.value;
 
             loadingOverlay.classList.remove('hidden');
-            statusText.textContent = mode === 'html' ? 'Rendering page with Puppeteer...' : `Generating ${mode}...`;
+            statusText.textContent = mode === 'html' ? 'Launching browser...' : `Generating ${mode}...`;
             goButton.disabled = true;
 
+            // Update status after 3 seconds
+            setTimeout(() => {
+                if (!goButton.disabled) return;
+                statusText.textContent = mode === 'html' ? 'Loading page...' : `Rendering ${mode}...`;
+            }, 3000);
+
+            // Update status after 10 seconds
+            setTimeout(() => {
+                if (!goButton.disabled) return;
+                statusText.textContent = 'This is taking a while...';
+            }, 10000);
+
+            // Update status after 30 seconds
+            setTimeout(() => {
+                if (!goButton.disabled) return;
+                statusText.textContent = 'Almost there... (site may be slow)';
+            }, 30000);
+
+            try {
             try {
                 const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=${mode}`;
                 
@@ -311,6 +437,14 @@
                     setTimeout(() => {
                         loadingOverlay.classList.add('hidden');
                         goButton.disabled = false;
+                        
+                        // Add to history
+                        if (!history.includes(url)) {
+                            history.push(url);
+                            if (history.length > 10) history.shift();
+                            window.history_cache = history;
+                            renderQuickLinks();
+                        }
                     }, 500);
                 }
 
@@ -324,7 +458,8 @@
                         • Make sure your backend server is running<br>
                         • Check the backend URL: <code>${backend}</code><br>
                         • Puppeteer may need more time for complex sites<br>
-                        • Some sites may still block automated browsers
+                        • Some sites may still block automated browsers<br><br>
+                        <button class="retry-btn" onclick="location.reload()">↻ Retry</button>
                     </div>
                 `;
                 goButton.disabled = false;
