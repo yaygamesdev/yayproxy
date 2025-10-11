@@ -1,5 +1,5 @@
 // Puppeteer-based Proxy Server for JavaScript-heavy sites
-// Install: npm install express cors node-fetch puppeteer-core @sparticuz/chromium
+// Install: npm install express cors node-fetch puppeteer-core @sparticuz/chromium puppeteer-extra puppeteer-extra-plugin-stealth
 
 const express = require('express');
 const cors = require('cors');
@@ -7,22 +7,27 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Determine environment and load appropriate Puppeteer
+// Determine environment and load appropriate Puppeteer with stealth
 const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
 let puppeteer;
 let chromium;
 
+// Use puppeteer-extra with stealth plugin
+const puppeteerExtra = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteerExtra.use(StealthPlugin());
+
 if (isProduction) {
     puppeteer = require('puppeteer-core');
     chromium = require('@sparticuz/chromium');
-    console.log('🚀 Running in PRODUCTION mode with @sparticuz/chromium');
+    console.log('🚀 Running in PRODUCTION mode with @sparticuz/chromium + STEALTH');
 } else {
     try {
         puppeteer = require('puppeteer');
-        console.log('🔧 Running in DEVELOPMENT mode with puppeteer');
+        console.log('🔧 Running in DEVELOPMENT mode with puppeteer + STEALTH');
     } catch (e) {
         puppeteer = require('puppeteer-core');
-        console.log('🔧 Running in DEVELOPMENT mode with puppeteer-core');
+        console.log('🔧 Running in DEVELOPMENT mode with puppeteer-core + STEALTH');
     }
 }
 
