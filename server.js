@@ -112,9 +112,13 @@ app.get('/proxy', async (req, res) => {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
-    // Validate URL
+    // Validate and clean URL
+    let cleanUrl;
     try {
-        new URL(url);
+        cleanUrl = new URL(url);
+        // Fix double slashes in path (except after protocol)
+        cleanUrl.pathname = cleanUrl.pathname.replace(/\/\//g, '/');
+        cleanUrl = cleanUrl.toString();
     } catch (e) {
         return res.status(400).json({ error: 'Invalid URL format' });
     }
@@ -149,11 +153,20 @@ app.get('/proxy', async (req, res) => {
             }
         });
 
-        // Navigate to URL
-        await page.goto(url, { 
-            waitUntil: 'networkidle2',
-            timeout: 30000 
-        });
+        // Navigate to URL with increased timeout and fallback strategies
+        try {
+            await page.goto(cleanUrl, { 
+                waitUntil: 'networkidle2',
+                timeout: 60000  // Increased to 60 seconds
+            });
+        } catch (timeoutError) {
+            // If networkidle2 times out, try with less strict condition
+            console.log('First navigation attempt timed out, trying with domcontentloaded...');
+            await page.goto(cleanUrl, { 
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+        }
 
         // Wait a bit for dynamic content
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -264,8 +277,9 @@ process.on('SIGINT', async () => {
     process.exit();
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
     console.log(`Puppeteer proxy server running on http://localhost:${PORT}`);
+    console.log(`Environment: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
     console.log(`Proxy endpoint: http://localhost:${PORT}/proxy?url=YOUR_URL`);
     console.log(`Screenshot mode: http://localhost:${PORT}/proxy?url=YOUR_URL&mode=screenshot`);
     console.log(`PDF mode: http://localhost:${PORT}/proxy?url=YOUR_URL&mode=pdf`);
