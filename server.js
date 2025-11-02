@@ -43,23 +43,23 @@ async function getBrowser() {
         const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
         
         if (isProduction) {
-            // Production: use @sparticuz/chromium
-            console.log('🚀 Launching browser in production mode...');
+            // Production: use @sparticuz/chromium with stealth
+            console.log('🚀 Launching stealth browser in production mode...');
             try {
-                browser = await puppeteer.launch({
+                browser = await puppeteerExtra.launch({
                     args: chromium.args,
                     defaultViewport: chromium.defaultViewport,
                     executablePath: await chromium.executablePath(),
                     headless: chromium.headless,
                 });
-                console.log('✅ Production browser launched successfully');
+                console.log('✅ Production stealth browser launched successfully');
             } catch (error) {
                 console.error('❌ Failed to launch production browser:', error.message);
                 throw error;
             }
         } else {
-            // Local development
-            console.log('🔧 Launching browser in development mode...');
+            // Local development with stealth
+            console.log('🔧 Launching stealth browser in development mode...');
             
             // Try to find system Chrome
             const chromePaths = [
@@ -85,7 +85,7 @@ async function getBrowser() {
             }
 
             try {
-                browser = await puppeteer.launch({
+                browser = await puppeteerExtra.launch({
                     headless: 'new',
                     executablePath: executablePath,
                     args: [
@@ -98,7 +98,7 @@ async function getBrowser() {
                         '--disable-gpu'
                     ]
                 });
-                console.log('✅ Development browser launched successfully');
+                console.log('✅ Development stealth browser launched successfully');
             } catch (error) {
                 console.error('❌ Failed to launch browser:', error.message);
                 throw error;
