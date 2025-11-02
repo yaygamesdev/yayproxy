@@ -57,6 +57,7 @@
       flex-direction: column;
       padding: 1.5rem;
       max-width: 100%;
+      min-height: 0;
     }
 
     /* Proxy Controls Card */
@@ -136,6 +137,8 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       overflow: hidden;
       position: relative;
+      min-height: 600px;
+      height: 100%;
     }
 
     iframe {
@@ -345,6 +348,57 @@
         const blobUrl = URL.createObjectURL(blob);
         
         mainIframe.src = blobUrl;
+        
+        // Wait for iframe to load, then intercept clicks
+        mainIframe.onload = () => {
+          if (proxyMode) {
+            try {
+              const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
+              
+              // Intercept ALL link clicks in the iframe
+              iframeDoc.addEventListener('click', function(e) {
+                // Check if click is on a link or inside a link
+                let target = e.target;
+                while (target && target.tagName !== 'A') {
+                  target = target.parentElement;
+                }
+                
+                if (target && target.tagName === 'A' && target.href) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  
+                  const clickedUrl = target.href;
+                  console.log('Link clicked:', clickedUrl);
+                  
+                  // Update URL and reload through proxy
+                  currentUrl = clickedUrl;
+                  urlInput.value = clickedUrl;
+                  loadProxy();
+                }
+              }, true); // Use capture phase to catch it early
+              
+              // Also intercept form submissions
+              iframeDoc.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const form = e.target;
+                let formUrl = form.action || iframeDoc.location.href;
+                
+                if (form.method.toLowerCase() === 'get') {
+                  const formData = new FormData(form);
+                  const params = new URLSearchParams(formData);
+                  formUrl += '?' + params.toString();
+                  
+                  currentUrl = formUrl;
+                  urlInput.value = formUrl;
+                  loadProxy();
+                }
+              }, true);
+              
+            } catch (err) {
+              console.log('Could not access iframe content (cross-origin):', err);
+            }
+          }
+        };
         
         setTimeout(() => {
           clearLoadingTimeouts();
