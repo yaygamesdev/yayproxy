@@ -106,12 +106,26 @@
       transform: translateY(-2px);
     }
 
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
     .mode-toggle {
       background: #845ef7;
     }
 
+    .mode-toggle:hover {
+      background: #7048e8;
+    }
+
     .fullscreen-btn {
       background: #2ecc71;
+    }
+
+    .fullscreen-btn:hover {
+      background: #27ae60;
     }
 
     /* Frame Area */
@@ -161,6 +175,26 @@
       100% { transform: rotate(360deg); }
     }
 
+    .progress-bar {
+      width: 300px;
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--grad);
+      width: 0%;
+      animation: progress 60s linear;
+    }
+
+    @keyframes progress {
+      0% { width: 0%; }
+      100% { width: 100%; }
+    }
+
     /* Footer */
     footer {
       text-align: center;
@@ -169,6 +203,28 @@
       font-size: 0.85rem;
       color: #aaa;
       margin-top: auto;
+    }
+
+    /* Error styling */
+    .error {
+      background: rgba(255, 107, 107, 0.2);
+      border: 2px solid #ff6b6b;
+      border-radius: 8px;
+      padding: 20px;
+      color: #ff6b6b;
+      margin: 20px;
+      max-width: 600px;
+    }
+
+    .retry-btn {
+      margin-top: 15px;
+      padding: 8px 20px;
+      background: #ff6b6b;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
     }
   </style>
 </head>
@@ -181,8 +237,8 @@
 
   <div class="container">
     <div class="header">
-      <input type="text" id="urlInput" placeholder="Enter URL (e.g. https://example.com)" />
-      <input type="text" id="backendUrl" placeholder="Backend URL (default localhost:3000)" />
+      <input type="text" id="urlInput" placeholder="Enter URL (e.g. https://example.com)" value="https://example.com" />
+      <input type="text" id="backendUrl" placeholder="Backend URL" value="https://your-app.onrender.com" />
       <button id="toggleModeBtn" class="mode-toggle">Switch to Proxy</button>
       <button id="fullscreenBtn" class="fullscreen-btn">Fullscreen</button>
       <button id="goButton">Go</button>
@@ -192,8 +248,11 @@
       <div class="loading-overlay hidden" id="loadingOverlay">
         <div class="spinner"></div>
         <div id="statusText">Loading...</div>
+        <div class="progress-bar">
+          <div class="progress-fill"></div>
+        </div>
       </div>
-      <iframe id="mainIframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+      <iframe id="mainIframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
     </div>
   </div>
 
@@ -210,53 +269,186 @@
     const goButton = document.getElementById('goButton');
 
     let proxyMode = false;
+    let currentUrl = '';
+    let loadingTimeouts = [];
+
+    function clearLoadingTimeouts() {
+      loadingTimeouts.forEach(t => clearTimeout(t));
+      loadingTimeouts = [];
+    }
 
     function loadIframe() {
       let url = urlInput.value.trim();
+      if (!url) {
+        alert('Please enter a URL');
+        return;
+      }
       if (url && !url.startsWith('http')) url = 'https://' + url;
+      currentUrl = url;
+      urlInput.value = url;
+      
+      loadingOverlay.classList.remove('hidden');
+      statusText.textContent = 'Loading iframe...';
+      
       mainIframe.src = url;
+      
+      // Hide loading after iframe loads
+      mainIframe.onload = () => {
+        setTimeout(() => {
+          loadingOverlay.classList.add('hidden');
+          goButton.disabled = false;
+        }, 500);
+      };
     }
 
     async function loadProxy() {
       let url = urlInput.value.trim();
+      if (!url) {
+        alert('Please enter a URL');
+        return;
+      }
       if (url && !url.startsWith('http')) url = 'https://' + url;
+      
+      currentUrl = url;
+      urlInput.value = url;
 
       const backend = backendUrl.value.trim() || 'http://localhost:3000';
       const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=html`;
 
+      clearLoadingTimeouts();
       loadingOverlay.classList.remove('hidden');
-      statusText.textContent = 'Rendering via Puppeteer...';
+      statusText.textContent = 'Launching browser...';
+      goButton.disabled = true;
+
+      // Progressive status updates
+      loadingTimeouts.push(setTimeout(() => {
+        if (goButton.disabled) statusText.textContent = 'Rendering page...';
+      }, 3000));
+
+      loadingTimeouts.push(setTimeout(() => {
+        if (goButton.disabled) statusText.textContent = 'This is taking a while...';
+      }, 10000));
+
+      loadingTimeouts.push(setTimeout(() => {
+        if (goButton.disabled) statusText.textContent = 'Almost there... (site may be slow)';
+      }, 30000));
 
       try {
         const response = await fetch(proxyUrl);
-        if (!response.ok) throw new Error('Proxy failed: ' + response.statusText);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.message || `Proxy failed: ${response.statusText}`);
+        }
+        
         const html = await response.text();
         const blob = new Blob([html], { type: 'text/html' });
-        mainIframe.src = URL.createObjectURL(blob);
+        const blobUrl = URL.createObjectURL(blob);
+        
+        mainIframe.src = blobUrl;
+        
+        setTimeout(() => {
+          clearLoadingTimeouts();
+          loadingOverlay.classList.add('hidden');
+          goButton.disabled = false;
+        }, 500);
+
       } catch (err) {
-        alert('Error loading proxy: ' + err.message);
-      } finally {
-        loadingOverlay.classList.add('hidden');
+        console.error('Proxy error:', err);
+        clearLoadingTimeouts();
+        loadingOverlay.innerHTML = `
+          <div class="error">
+            <strong>❌ Failed to load page</strong><br><br>
+            <strong>Error:</strong> ${err.message}<br><br>
+            <strong>Troubleshooting:</strong><br>
+            • Check that the backend URL is correct<br>
+            • Some sites may block automated browsers<br>
+            • Try a different website<br><br>
+            <button class="retry-btn" onclick="retryLoad()">↻ Retry</button>
+          </div>
+        `;
+        goButton.disabled = false;
       }
     }
+
+    window.retryLoad = function() {
+      loadingOverlay.innerHTML = `
+        <div class="spinner"></div>
+        <div id="statusText">Loading...</div>
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+      `;
+      if (proxyMode) loadProxy();
+      else loadIframe();
+    };
 
     function toggleMode() {
       proxyMode = !proxyMode;
       toggleModeBtn.textContent = proxyMode ? 'Switch to Iframe' : 'Switch to Proxy';
-      if (proxyMode) loadProxy();
-      else loadIframe();
+      
+      // Update URL input to show current URL if we have one
+      if (currentUrl) {
+        urlInput.value = currentUrl;
+      }
+      
+      if (proxyMode && currentUrl) {
+        loadProxy();
+      } else if (!proxyMode && currentUrl) {
+        loadIframe();
+      }
     }
 
+    // Monitor iframe navigation in proxy mode to re-proxy links
+    let lastCheckedUrl = '';
+    setInterval(() => {
+      if (proxyMode && mainIframe.src && mainIframe.src.startsWith('blob:')) {
+        try {
+          const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
+          const iframeUrl = iframeDoc.location.href;
+          
+          // If iframe navigated to a new URL (not blob), re-proxy it
+          if (iframeUrl && !iframeUrl.startsWith('blob:') && iframeUrl !== 'about:blank' && iframeUrl !== lastCheckedUrl) {
+            lastCheckedUrl = iframeUrl;
+            currentUrl = iframeUrl;
+            urlInput.value = iframeUrl;
+            console.log('Detected navigation to:', iframeUrl);
+            
+            // Re-proxy the new URL
+            setTimeout(() => loadProxy(), 100);
+          }
+        } catch (e) {
+          // Cross-origin error - can't access iframe content
+          // This is normal for some navigations
+        }
+      }
+    }, 1000);
+
     toggleModeBtn.addEventListener('click', toggleMode);
-    goButton.addEventListener('click', () => proxyMode ? loadProxy() : loadIframe());
-    urlInput.addEventListener('keypress', e => { if (e.key === 'Enter') goButton.click(); });
+    goButton.addEventListener('click', () => {
+      if (proxyMode) loadProxy();
+      else loadIframe();
+    });
+    
+    urlInput.addEventListener('keypress', e => { 
+      if (e.key === 'Enter') goButton.click(); 
+    });
+    
     fullscreenBtn.addEventListener('click', () => {
       const frameContainer = document.getElementById('frameContainer');
       if (document.fullscreenElement) document.exitFullscreen();
       else frameContainer.requestFullscreen();
     });
 
-    window.addEventListener('load', loadIframe);
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Ctrl/Cmd + K to focus URL bar
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        urlInput.focus();
+        urlInput.select();
+      }
+    });
+
+    // Don't auto-load on page load
+    // window.addEventListener('load', loadIframe);
   </script>
 </body>
 </html>
