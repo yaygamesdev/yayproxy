@@ -1,509 +1,210 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Proxy</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Proxy with Iframe Toggle</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
+    .container { display: flex; flex-direction: column; height: 100vh; }
 
-        .container {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
+    .header {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 15px 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
 
-        .header {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
+    .url-bar {
+      display: flex;
+      gap: 10px;
+      flex: 1;
+      align-items: center;
+      flex-wrap: wrap;
+    }
 
-        .url-bar {
-            display: flex;
-            gap: 10px;
-            max-width: 1200px;
-            margin: 0 auto;
-            width: 100%;
-            align-items: center;
-        }
+    input[type="text"] {
+      flex: 1;
+      padding: 10px 15px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 16px;
+      transition: border-color 0.3s;
+    }
 
-        input[type="text"] {
-            flex: 1;
-            padding: 12px 20px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
+    input[type="text"]:focus { border-color: #667eea; outline: none; }
 
-        input[type="text"]:focus {
-            outline: none;
-            border-color: #667eea;
-        }
+    button {
+      padding: 10px 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
 
-        button {
-            padding: 12px 30px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            white-space: nowrap;
-        }
+    button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(102,126,234,0.4); }
 
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
+    button:active { transform: translateY(0); }
 
-        button:active {
-            transform: translateY(0);
-        }
+    .content {
+      flex: 1;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+    }
 
-        button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
+    .proxy-frame {
+      flex: 1;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      overflow: hidden;
+      position: relative;
+    }
 
-        select {
-            padding: 12px 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 14px;
-            background: white;
-            cursor: pointer;
-        }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
 
-        .content {
-            flex: 1;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-        }
+    .loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(255, 255, 255, 0.9);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      gap: 20px;
+    }
 
-        .proxy-frame {
-            flex: 1;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-            overflow: hidden;
-            position: relative;
-        }
+    .hidden { display: none; }
 
-        iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
-        }
+    .spinner {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #667eea;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
 
-        .loading-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 10;
-            gap: 20px;
-        }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        .loading-overlay.hidden {
-            display: none;
-        }
+    .mode-toggle {
+      background: #fff;
+      color: #333;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      font-weight: 600;
+    }
 
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .error {
-            background: #fee;
-            border: 2px solid #fcc;
-            border-radius: 8px;
-            padding: 20px;
-            color: #c33;
-            margin: 20px;
-            max-width: 600px;
-        }
-
-        .info {
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            padding: 12px 15px;
-            margin-bottom: 15px;
-            border-radius: 4px;
-            font-size: 13px;
-            color: #1565c0;
-        }
-
-        .status {
-            color: #666;
-            font-size: 14px;
-            text-align: center;
-        }
-
-        .progress-bar {
-            width: 300px;
-            height: 4px;
-            background: #e0e0e0;
-            border-radius: 2px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea, #764ba2);
-            width: 0%;
-            animation: progress 60s linear;
-        }
-
-        @keyframes progress {
-            0% { width: 0%; }
-            100% { width: 100%; }
-        }
-
-        .server-config {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 13px;
-            color: #666;
-        }
-
-        .server-config input {
-            padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            font-size: 13px;
-            width: 250px;
-        }
-
-        .quick-links {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 8px;
-        }
-
-        .quick-link {
-            padding: 4px 10px;
-            background: rgba(102, 126, 234, 0.1);
-            border: 1px solid rgba(102, 126, 234, 0.3);
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .quick-link:hover {
-            background: rgba(102, 126, 234, 0.2);
-            border-color: rgba(102, 126, 234, 0.5);
-        }
-
-        .retry-btn {
-            margin-top: 15px;
-            padding: 8px 20px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-
-        .retry-btn:hover {
-            background: #5568d3;
-        }
-    </style>
+    .fullscreen-btn {
+      background: #4caf50;
+      border: none;
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="url-bar">
-                <div class="server-config">
-                    <label>Backend:</label>
-                    <input 
-                        type="text" 
-                        id="backendUrl" 
-                        value="http://localhost:3000"
-                        placeholder="http://localhost:3000"
-                    />
-                </div>
-                <input 
-                    type="text" 
-                    id="urlInput" 
-                    placeholder="Enter URL (e.g., https://example.com)"
-                    value="https://example.com"
-                />
-                <select id="modeSelect">
-                    <option value="html">HTML</option>
-                    <option value="screenshot">Screenshot</option>
-                    <option value="pdf">PDF</option>
-                </select>
-                <button onclick="loadPage()" id="goButton">Go</button>
-            </div>
-        </div>
-        <div class="content">
-            <div class="info">
-                <strong>🚀 Puppeteer Proxy Active!</strong> This proxy uses headless Chrome to render JavaScript-heavy sites. Choose mode: HTML (interactive), Screenshot (static image), or PDF (download).
-                <div class="quick-links" id="quickLinks"></div>
-            </div>
-            <div class="proxy-frame">
-                <div class="loading-overlay hidden" id="loadingOverlay">
-                    <div class="spinner"></div>
-                    <div class="status" id="statusText">Loading...</div>
-                    <div class="progress-bar">
-                        <div class="progress-fill"></div>
-                    </div>
-                </div>
-                <iframe id="proxyIframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
-            </div>
-        </div>
+  <div class="container">
+    <div class="header">
+      <div class="url-bar">
+        <input type="text" id="urlInput" placeholder="Enter URL" value="https://example.com" />
+        <input type="text" id="backendUrl" value="http://localhost:3000" placeholder="Backend URL" style="max-width: 200px;" />
+        <button id="toggleModeBtn" class="mode-toggle">Switch to Proxy</button>
+        <button id="fullscreenBtn" class="fullscreen-btn">Fullscreen</button>
+        <button id="goButton">Go</button>
+      </div>
     </div>
 
-    <script>
-        const urlInput = document.getElementById('urlInput');
-        const backendUrl = document.getElementById('backendUrl');
-        const modeSelect = document.getElementById('modeSelect');
-        const proxyIframe = document.getElementById('proxyIframe');
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        const statusText = document.getElementById('statusText');
-        const goButton = document.getElementById('goButton');
-        const quickLinksContainer = document.getElementById('quickLinks');
+    <div class="content">
+      <div class="proxy-frame" id="frameContainer">
+        <div class="loading-overlay hidden" id="loadingOverlay">
+          <div class="spinner"></div>
+          <div id="statusText">Loading...</div>
+        </div>
+        <iframe id="mainIframe" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+      </div>
+    </div>
+  </div>
 
-        // Popular sites
-        const popularSites = [
-            'https://example.com',
-            'https://news.ycombinator.com',
-            'https://wikipedia.org',
-            'https://github.com',
-        ];
+  <script>
+    const urlInput = document.getElementById('urlInput');
+    const backendUrl = document.getElementById('backendUrl');
+    const mainIframe = document.getElementById('mainIframe');
+    const toggleModeBtn = document.getElementById('toggleModeBtn');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const statusText = document.getElementById('statusText');
+    const goButton = document.getElementById('goButton');
 
-        // Load history
-        let history = [];
-        try {
-            const saved = window.history_cache || [];
-            history = saved;
-        } catch (e) {}
+    let proxyMode = false; // Start with normal iframe mode
 
-        // Render quick links
-        function renderQuickLinks() {
-            const sites = history.length > 0 ? history.slice(-4).reverse() : popularSites;
-            quickLinksContainer.innerHTML = sites.map(url => {
-                const domain = new URL(url).hostname.replace('www.', '');
-                return `<div class="quick-link" onclick="loadQuickSite('${url}')">${domain}</div>`;
-            }).join('');
-        }
+    function loadIframe() {
+      let url = urlInput.value.trim();
+      if (url && !url.startsWith('http')) url = 'https://' + url;
+      mainIframe.src = url;
+    }
 
-        window.loadQuickSite = function(url) {
-            urlInput.value = url;
-            loadPage();
-        };
+    async function loadProxy() {
+      let url = urlInput.value.trim();
+      if (url && !url.startsWith('http')) url = 'https://' + url;
 
-        renderQuickLinks();
+      const backend = backendUrl.value.trim() || 'http://localhost:3000';
+      const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=html`;
 
-        urlInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                loadPage();
-            }
-        });
+      loadingOverlay.classList.remove('hidden');
+      statusText.textContent = 'Rendering via Puppeteer...';
 
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            // Ctrl/Cmd + K to focus URL bar
-            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                e.preventDefault();
-                urlInput.focus();
-                urlInput.select();
-            }
-            // Escape to stop loading
-            if (e.key === 'Escape' && !goButton.disabled) {
-                goButton.disabled = false;
-                loadingOverlay.classList.add('hidden');
-            }
-        });
+      try {
+        const response = await fetch(proxyUrl);
+        if (!response.ok) throw new Error('Proxy failed: ' + response.statusText);
+        const html = await response.text();
+        const blob = new Blob([html], { type: 'text/html' });
+        mainIframe.src = URL.createObjectURL(blob);
+      } catch (err) {
+        alert('Error loading proxy: ' + err.message);
+      } finally {
+        loadingOverlay.classList.add('hidden');
+      }
+    }
 
-        async function loadPage() {
-            let url = urlInput.value.trim();
-            
-            if (url && !url.match(/^https?:\/\//i)) {
-                url = 'https://' + url;
-            }
+    function toggleMode() {
+      proxyMode = !proxyMode;
+      toggleModeBtn.textContent = proxyMode ? 'Switch to Iframe' : 'Switch to Proxy';
+      if (proxyMode) loadProxy();
+      else loadIframe();
+    }
 
-            if (!url) {
-                alert('Please enter a valid URL');
-                return;
-            }
+    toggleModeBtn.addEventListener('click', toggleMode);
+    goButton.addEventListener('click', () => proxyMode ? loadProxy() : loadIframe());
+    urlInput.addEventListener('keypress', e => { if (e.key === 'Enter') goButton.click(); });
+    fullscreenBtn.addEventListener('click', () => {
+      const frameContainer = document.getElementById('frameContainer');
+      if (document.fullscreenElement) document.exitFullscreen();
+      else frameContainer.requestFullscreen();
+    });
 
-            const backend = backendUrl.value.trim() || 'http://localhost:3000';
-            const mode = modeSelect.value;
-
-            loadingOverlay.classList.remove('hidden');
-            statusText.textContent = mode === 'html' ? 'Launching browser...' : `Generating ${mode}...`;
-            goButton.disabled = true;
-
-            // Update status after 3 seconds
-            const timeout1 = setTimeout(() => {
-                if (goButton.disabled) {
-                    statusText.textContent = mode === 'html' ? 'Loading page...' : `Rendering ${mode}...`;
-                }
-            }, 3000);
-
-            // Update status after 10 seconds
-            const timeout2 = setTimeout(() => {
-                if (goButton.disabled) {
-                    statusText.textContent = 'This is taking a while...';
-                }
-            }, 10000);
-
-            // Update status after 30 seconds
-            const timeout3 = setTimeout(() => {
-                if (goButton.disabled) {
-                    statusText.textContent = 'Almost there... (site may be slow)';
-                }
-            }, 30000);
-
-            try {
-                const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=${mode}`;
-                
-                if (mode === 'screenshot') {
-                    // Display screenshot as image
-                    const img = document.createElement('img');
-                    img.src = proxyUrl;
-                    img.style.width = '100%';
-                    img.style.height = 'auto';
-                    img.onload = () => {
-                        clearTimeout(timeout1);
-                        clearTimeout(timeout2);
-                        clearTimeout(timeout3);
-                        loadingOverlay.classList.add('hidden');
-                        goButton.disabled = false;
-                    };
-                    img.onerror = () => {
-                        throw new Error('Failed to load screenshot');
-                    };
-                    
-                    proxyIframe.style.display = 'none';
-                    const container = document.querySelector('.proxy-frame');
-                    const existingImg = container.querySelector('img');
-                    if (existingImg) existingImg.remove();
-                    container.appendChild(img);
-                    
-                } else if (mode === 'pdf') {
-                    // Download PDF
-                    const link = document.createElement('a');
-                    link.href = proxyUrl;
-                    link.download = `proxy_${Date.now()}.pdf`;
-                    link.click();
-                    
-                    clearTimeout(timeout1);
-                    clearTimeout(timeout2);
-                    clearTimeout(timeout3);
-                    loadingOverlay.classList.add('hidden');
-                    goButton.disabled = false;
-                    alert('PDF download started!');
-                    
-                } else {
-                    // HTML mode - display in iframe
-                    proxyIframe.style.display = 'block';
-                    const existingImg = document.querySelector('.proxy-frame img');
-                    if (existingImg) existingImg.remove();
-                    
-                    const response = await fetch(proxyUrl);
-
-                    if (!response.ok) {
-                        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
-                    }
-
-                    const html = await response.text();
-                    
-                    // Create a blob URL and load it in iframe
-                    const blob = new Blob([html], { type: 'text/html' });
-                    const blobUrl = URL.createObjectURL(blob);
-                    
-                    proxyIframe.src = blobUrl;
-                    
-                    setTimeout(() => {
-                        clearTimeout(timeout1);
-                        clearTimeout(timeout2);
-                        clearTimeout(timeout3);
-                        loadingOverlay.classList.add('hidden');
-                        goButton.disabled = false;
-                        
-                        // Add to history
-                        if (!history.includes(url)) {
-                            history.push(url);
-                            if (history.length > 10) history.shift();
-                            window.history_cache = history;
-                            renderQuickLinks();
-                        }
-                    }, 500);
-                }
-
-            } catch (error) {
-                console.error('Error:', error);
-                clearTimeout(timeout1);
-                clearTimeout(timeout2);
-                clearTimeout(timeout3);
-                loadingOverlay.innerHTML = `
-                    <div class="error">
-                        <strong>❌ Failed to load page</strong><br><br>
-                        <strong>Error:</strong> ${error.message}<br><br>
-                        <strong>Troubleshooting:</strong><br>
-                        • Make sure your backend server is running<br>
-                        • Check the backend URL: <code>${backend}</code><br>
-                        • Puppeteer may need more time for complex sites<br>
-                        • Some sites may still block automated browsers<br><br>
-                        <button class="retry-btn" onclick="location.reload()">↻ Retry</button>
-                    </div>
-                `;
-                goButton.disabled = false;
-            }
-        }
-
-        // Test backend connection on load
-        window.addEventListener('load', async () => {
-            const backend = backendUrl.value.trim();
-            try {
-                const response = await fetch(`${backend}/health`);
-                if (response.ok) {
-                    console.log('✅ Puppeteer backend server is reachable');
-                }
-            } catch (error) {
-                console.warn('⚠️ Backend server not reachable:', error.message);
-            }
-        });
-    </script>
+    // Load iframe instantly on page load
+    window.addEventListener('load', loadIframe);
+  </script>
 </body>
 </html>
