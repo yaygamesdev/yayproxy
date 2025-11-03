@@ -21,7 +21,8 @@
       color: #fff;
       display: flex;
       flex-direction: column;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
     }
 
     /* Header */
@@ -56,8 +57,7 @@
       display: flex;
       flex-direction: column;
       padding: 1.5rem;
-      max-width: 100%;
-      min-height: 0;
+      overflow: hidden;
     }
 
     /* Proxy Controls Card */
@@ -137,8 +137,6 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
       overflow: hidden;
       position: relative;
-      min-height: 600px;
-      height: 100%;
     }
 
     iframe {
@@ -229,6 +227,42 @@
       cursor: pointer;
       font-size: 14px;
     }
+
+    /* Navigation Controls */
+    .nav-controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .nav-btn {
+      padding: 0.6rem 0.8rem;
+      background: #2c2c2c;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .nav-btn:hover:not(:disabled) {
+      background: #3c3c3c;
+    }
+
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .nav-btn svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+    }
   </style>
 </head>
 <body>
@@ -240,6 +274,22 @@
 
   <div class="container">
     <div class="header">
+      <!-- Navigation Controls -->
+      <div class="nav-controls">
+        <button id="backBtn" class="nav-btn" title="Back" disabled>
+          <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+        </button>
+        <button id="forwardBtn" class="nav-btn" title="Forward" disabled>
+          <svg viewBox="0 0 24 24"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+        </button>
+        <button id="refreshBtn" class="nav-btn" title="Refresh">
+          <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        </button>
+        <button id="homeBtn" class="nav-btn" title="Home">
+          <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+        </button>
+      </div>
+
       <input type="text" id="urlInput" placeholder="Enter URL (e.g. https://example.com)" value="https://example.com" />
       <input type="text" id="backendUrl" placeholder="Backend URL" value="https://your-app.onrender.com" />
       <button id="toggleModeBtn" class="mode-toggle">Switch to Proxy</button>
@@ -271,13 +321,50 @@
     const statusText = document.getElementById('statusText');
     const goButton = document.getElementById('goButton');
 
+    // Navigation buttons
+    const backBtn = document.getElementById('backBtn');
+    const forwardBtn = document.getElementById('forwardBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const homeBtn = document.getElementById('homeBtn');
+
     let proxyMode = false;
     let currentUrl = '';
     let loadingTimeouts = [];
+    
+    // Navigation history
+    let navigationHistory = [];
+    let historyIndex = -1;
+    const HOME_URL = 'https://example.com';
 
     function clearLoadingTimeouts() {
       loadingTimeouts.forEach(t => clearTimeout(t));
       loadingTimeouts = [];
+    }
+
+    function updateNavigationButtons() {
+      backBtn.disabled = historyIndex <= 0;
+      forwardBtn.disabled = historyIndex >= navigationHistory.length - 1;
+    }
+
+    function addToHistory(url) {
+      // If we're not at the end of history, remove everything after current position
+      if (historyIndex < navigationHistory.length - 1) {
+        navigationHistory = navigationHistory.slice(0, historyIndex + 1);
+      }
+      
+      // Only add if it's different from current page
+      if (navigationHistory[historyIndex] !== url) {
+        navigationHistory.push(url);
+        historyIndex++;
+        
+        // Limit history to 50 items
+        if (navigationHistory.length > 50) {
+          navigationHistory.shift();
+          historyIndex--;
+        }
+      }
+      
+      updateNavigationButtons();
     }
 
     function loadIframe() {
@@ -294,6 +381,9 @@
       statusText.textContent = 'Loading iframe...';
       
       mainIframe.src = url;
+      
+      // Add to history
+      addToHistory(url);
       
       // Hide loading after iframe loads
       mainIframe.onload = () => {
@@ -404,6 +494,9 @@
           clearLoadingTimeouts();
           loadingOverlay.classList.add('hidden');
           goButton.disabled = false;
+          
+          // Add to history
+          addToHistory(url);
         }, 500);
 
       } catch (err) {
@@ -450,7 +543,7 @@
       }
     }
 
-    // Monitor iframe navigation in proxy mode to re-proxy links
+    // Monitor iframe navigation in proxy mode (backup method)
     let lastCheckedUrl = '';
     setInterval(() => {
       if (proxyMode && mainIframe.src && mainIframe.src.startsWith('blob:')) {
@@ -458,22 +551,21 @@
           const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
           const iframeUrl = iframeDoc.location.href;
           
-          // If iframe navigated to a new URL (not blob), re-proxy it
-          if (iframeUrl && !iframeUrl.startsWith('blob:') && iframeUrl !== 'about:blank' && iframeUrl !== lastCheckedUrl) {
+          // If iframe somehow navigated to a new URL (not blob), re-proxy it
+          if (iframeUrl && !iframeUrl.startsWith('blob:') && iframeUrl !== 'about:blank' && iframeUrl !== lastCheckedUrl && iframeUrl !== currentUrl) {
             lastCheckedUrl = iframeUrl;
             currentUrl = iframeUrl;
             urlInput.value = iframeUrl;
-            console.log('Detected navigation to:', iframeUrl);
+            console.log('Detected unexpected navigation to:', iframeUrl);
             
             // Re-proxy the new URL
             setTimeout(() => loadProxy(), 100);
           }
         } catch (e) {
-          // Cross-origin error - can't access iframe content
-          // This is normal for some navigations
+          // Cross-origin error - normal
         }
       }
-    }, 1000);
+    }, 500); // Check more frequently
 
     toggleModeBtn.addEventListener('click', toggleMode);
     goButton.addEventListener('click', () => {
