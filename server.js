@@ -279,6 +279,62 @@ app.get('/proxy', async (req, res) => {
                     }
                 }
                 
+                // Override window.location to prevent navigation
+                const originalLocation = window.location;
+                let isNavigating = false;
+                
+                Object.defineProperty(window, 'location', {
+                    get: function() {
+                        return originalLocation;
+                    },
+                    set: function(url) {
+                        if (!isNavigating) {
+                            console.log('🚫 Blocked window.location navigation to:', url);
+                            // Instead of navigating, you could send message to parent
+                            if (window.parent !== window) {
+                                window.parent.postMessage({
+                                    type: 'navigate',
+                                    url: makeAbsolute(url)
+                                }, '*');
+                            }
+                        }
+                    }
+                });
+                
+                // Override window.open
+                const originalOpen = window.open;
+                window.open = function(url, target, features) {
+                    console.log('🚫 Blocked window.open to:', url);
+                    if (url && window.parent !== window) {
+                        window.parent.postMessage({
+                            type: 'navigate',
+                            url: makeAbsolute(url)
+                        }, '*');
+                    }
+                    return null;
+                };
+                
+                // Intercept History API
+                const originalPushState = history.pushState;
+                const originalReplaceState = history.replaceState;
+                
+                history.pushState = function(state, title, url) {
+                    console.log('📍 History pushState:', url);
+                    if (url && window.parent !== window) {
+                        const absoluteUrl = makeAbsolute(url);
+                        window.parent.postMessage({
+                            type: 'navigate',
+                            url: absoluteUrl
+                        }, '*');
+                    }
+                    return originalPushState.apply(this, arguments);
+                };
+                
+                history.replaceState = function(state, title, url) {
+                    console.log('📍 History replaceState:', url);
+                    return originalReplaceState.apply(this, arguments);
+                };
+                
                 // Wait for DOM to be ready
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', fixUrls);
@@ -307,7 +363,7 @@ app.get('/proxy', async (req, res) => {
                     });
                 }
                 
-                console.log('🔧 Proxy URL fixer loaded');
+                console.log('🔧 Proxy URL fixer and navigation interceptor loaded');
             })();
             </script>
             `;
