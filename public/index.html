@@ -562,6 +562,14 @@
               console.error('❌ Error setting up interceptors:', err);
             }
           }
+          
+          setTimeout(() => {
+            clearLoadingTimeouts();
+            loadingOverlay.classList.add('hidden');
+            goButton.disabled = false;
+            addToHistory(url);
+          }, 500);
+        };
               
               iframeDoc.addEventListener('submit', function(e) {
                 e.preventDefault();
