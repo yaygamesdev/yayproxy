@@ -43,11 +43,14 @@ async function getBrowser() {
         const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
         
         if (isProduction) {
-            // Production: use @sparticuz/chromium with stealth
             console.log('🚀 Launching stealth browser in production mode...');
             try {
                 browser = await puppeteerExtra.launch({
-                    args: chromium.args,
+                    args: [
+                        ...chromium.args,
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process'
+                    ],
                     defaultViewport: chromium.defaultViewport,
                     executablePath: await chromium.executablePath(),
                     headless: chromium.headless,
@@ -58,10 +61,8 @@ async function getBrowser() {
                 throw error;
             }
         } else {
-            // Local development with stealth
             console.log('🔧 Launching stealth browser in development mode...');
             
-            // Try to find system Chrome
             const chromePaths = [
                 '/usr/bin/google-chrome',
                 '/usr/bin/chromium-browser',
@@ -95,7 +96,9 @@ async function getBrowser() {
                         '--disable-accelerated-2d-canvas',
                         '--no-first-run',
                         '--no-zygote',
-                        '--disable-gpu'
+                        '--disable-gpu',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process'
                     ]
                 });
                 console.log('✅ Development stealth browser launched successfully');
@@ -111,7 +114,7 @@ async function getBrowser() {
 // Proxy endpoint with full rendering
 app.get('/proxy', async (req, res) => {
     const url = req.query.url;
-    const mode = req.query.mode || 'html'; // html, screenshot, pdf
+    const mode = req.query.mode || 'html';
     
     if (!url) {
         return res.status(400).json({ error: 'URL parameter is required' });
@@ -121,7 +124,6 @@ app.get('/proxy', async (req, res) => {
     let cleanUrl;
     try {
         cleanUrl = new URL(url);
-        // Fix double slashes in path (except after protocol)
         cleanUrl.pathname = cleanUrl.pathname.replace(/\/\//g, '/');
         cleanUrl = cleanUrl.toString();
     } catch (e) {
@@ -134,50 +136,103 @@ app.get('/proxy', async (req, res) => {
         const browser = await getBrowser();
         page = await browser.newPage();
 
-        // Set viewport
+        // Set larger viewport for better rendering
         await page.setViewport({ width: 1920, height: 1080 });
 
-        // Set user agent
+        // Set realistic user agent
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // Block ads and tracking (optional, speeds things up)
+        // Set extra headers to appear more like a real browser
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        });
+
+        // Intelligent request interception - only block truly unnecessary resources
         await page.setRequestInterception(true);
         page.on('request', (request) => {
             const url = request.url();
             const resourceType = request.resourceType();
             
-            // Block ads and analytics
-            if (url.includes('doubleclick.net') || 
-                url.includes('googleadservices.com') ||
-                url.includes('google-analytics.com') ||
-                url.includes('facebook.com/tr') ||
-                resourceType === 'font') {
+            // Only block specific known ad/tracking domains, allow everything else
+            const blockedDomains = [
+                'doubleclick.net',
+                'googleadservices.com',
+                'googlesyndication.com',
+                'google-analytics.com',
+                'googletagmanager.com',
+                'facebook.com/tr',
+                'analytics.twitter.com'
+            ];
+            
+            if (blockedDomains.some(domain => url.includes(domain))) {
                 request.abort();
             } else {
                 request.continue();
             }
         });
 
-        // Navigate to URL with increased timeout and fallback strategies
+        // Navigate with multiple fallback strategies
+        console.log(`🌐 Loading: ${cleanUrl}`);
+        
         try {
+            // First attempt: networkidle0 (most complete)
             await page.goto(cleanUrl, { 
-                waitUntil: 'networkidle2',
-                timeout: 60000  // Increased to 60 seconds
+                waitUntil: 'networkidle0',
+                timeout: 45000
             });
-        } catch (timeoutError) {
-            // If networkidle2 times out, try with less strict condition
-            console.log('First navigation attempt timed out, trying with domcontentloaded...');
-            await page.goto(cleanUrl, { 
-                waitUntil: 'domcontentloaded',
-                timeout: 30000
-            });
+            console.log('✅ Loaded with networkidle0');
+        } catch (e1) {
+            console.log('⚠️ networkidle0 failed, trying networkidle2...');
+            try {
+                await page.goto(cleanUrl, { 
+                    waitUntil: 'networkidle2',
+                    timeout: 45000
+                });
+                console.log('✅ Loaded with networkidle2');
+            } catch (e2) {
+                console.log('⚠️ networkidle2 failed, trying load...');
+                try {
+                    await page.goto(cleanUrl, { 
+                        waitUntil: 'load',
+                        timeout: 30000
+                    });
+                    console.log('✅ Loaded with load event');
+                } catch (e3) {
+                    console.log('⚠️ load failed, trying domcontentloaded...');
+                    await page.goto(cleanUrl, { 
+                        waitUntil: 'domcontentloaded',
+                        timeout: 20000
+                    });
+                    console.log('✅ Loaded with domcontentloaded');
+                }
+            }
         }
 
-        // Wait a bit for dynamic content
+        // Wait for dynamic content - longer wait for complex sites
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Try to wait for common content indicators
+        try {
+            await page.waitForSelector('body', { timeout: 5000 });
+        } catch (e) {
+            console.log('Body element check skipped');
+        }
+
+        // Execute JavaScript to ensure everything is loaded
+        await page.evaluate(() => {
+            // Trigger any lazy-loaded content
+            window.scrollTo(0, document.body.scrollHeight / 2);
+            window.scrollTo(0, 0);
+        });
+
+        // Additional wait after scrolling
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         if (mode === 'screenshot') {
-            // Return screenshot
             const screenshot = await page.screenshot({ 
                 fullPage: true,
                 type: 'png'
@@ -185,7 +240,6 @@ app.get('/proxy', async (req, res) => {
             res.setHeader('Content-Type', 'image/png');
             res.send(screenshot);
         } else if (mode === 'pdf') {
-            // Return PDF
             const pdf = await page.pdf({ 
                 format: 'A4',
                 printBackground: true
@@ -193,41 +247,103 @@ app.get('/proxy', async (req, res) => {
             res.setHeader('Content-Type', 'application/pdf');
             res.send(pdf);
         } else {
-            // Return rendered HTML
+            // Get the fully rendered HTML
             const html = await page.content();
             
-            // Inject base tag
+            // Enhanced HTML modification
             let modifiedHtml = html;
+            
+            // Add base tag if not present
             if (!modifiedHtml.includes('<base')) {
-                modifiedHtml = modifiedHtml.replace(
-                    /<head>/i, 
-                    `<head><base href="${url}">`
-                );
+                const baseTag = `<base href="${cleanUrl}">`;
+                modifiedHtml = modifiedHtml.replace(/<head>/i, `<head>${baseTag}`);
             }
             
-            res.setHeader('Content-Type', 'text/html');
-            res.setHeader('X-Proxied-URL', url);
+            // Inject script to fix relative URLs and prevent navigation
+            const injectionScript = `
+            <script>
+            (function() {
+                // Fix any remaining relative URLs
+                const baseUrl = '${cleanUrl}';
+                const base = new URL(baseUrl);
+                
+                // Function to make URLs absolute
+                function makeAbsolute(url) {
+                    if (!url || url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('#')) {
+                        return url;
+                    }
+                    try {
+                        return new URL(url, baseUrl).href;
+                    } catch (e) {
+                        return url;
+                    }
+                }
+                
+                // Wait for DOM to be ready
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', fixUrls);
+                } else {
+                    fixUrls();
+                }
+                
+                function fixUrls() {
+                    // Fix images
+                    document.querySelectorAll('img[src]').forEach(img => {
+                        img.src = makeAbsolute(img.src);
+                    });
+                    
+                    // Fix links
+                    document.querySelectorAll('link[href]').forEach(link => {
+                        link.href = makeAbsolute(link.href);
+                    });
+                    
+                    // Fix scripts
+                    document.querySelectorAll('script[src]').forEach(script => {
+                        const oldSrc = script.src;
+                        const newSrc = makeAbsolute(oldSrc);
+                        if (oldSrc !== newSrc) {
+                            script.src = newSrc;
+                        }
+                    });
+                }
+                
+                console.log('🔧 Proxy URL fixer loaded');
+            })();
+            </script>
+            `;
+            
+            modifiedHtml = modifiedHtml.replace('</head>', injectionScript + '</head>');
+            
+            res.setHeader('Content-Type', 'text/html; charset=utf-8');
+            res.setHeader('X-Proxied-URL', cleanUrl);
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
             res.send(modifiedHtml);
+            
+            console.log(`✅ Successfully proxied: ${cleanUrl}`);
         }
 
     } catch (error) {
-        console.error('Proxy error:', error);
+        console.error('❌ Proxy error:', error);
         
         let errorMessage = error.message;
         let statusCode = 500;
         
         if (error.name === 'TimeoutError') {
-            errorMessage = 'Page load timeout. The website took too long to load.';
+            errorMessage = 'Page load timeout. The website took too long to load or may be blocking automated access.';
             statusCode = 504;
         } else if (error.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
             errorMessage = 'Website not found. Check if the URL is correct.';
             statusCode = 404;
+        } else if (error.message.includes('net::ERR_CONNECTION_REFUSED')) {
+            errorMessage = 'Connection refused. The website may be down or blocking access.';
+            statusCode = 503;
         }
         
         res.status(statusCode).json({ 
             error: 'Failed to fetch URL', 
             message: errorMessage,
-            url: url
+            url: url,
+            details: error.message
         });
     } finally {
         if (page) {
@@ -265,17 +381,27 @@ app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok', 
         message: 'Puppeteer proxy server is running',
-        puppeteer: browser ? 'connected' : 'not initialized'
+        puppeteer: browser ? 'connected' : 'not initialized',
+        environment: isProduction ? 'production' : 'development'
     });
 });
 
 // Root
 app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/index.html');
+    res.sendFile(__dirname + '/public/index.html');
 });
 
 // Cleanup on exit
 process.on('SIGINT', async () => {
+    console.log('🛑 Shutting down...');
+    if (browser) {
+        await browser.close();
+    }
+    process.exit();
+});
+
+process.on('SIGTERM', async () => {
+    console.log('🛑 Shutting down...');
     if (browser) {
         await browser.close();
     }
@@ -283,7 +409,7 @@ process.on('SIGINT', async () => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Puppeteer proxy server running on http://localhost:${PORT}`);
+    console.log(`✅ Puppeteer proxy server running on http://localhost:${PORT}`);
     console.log(`Environment: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
     console.log(`Proxy endpoint: http://localhost:${PORT}/proxy?url=YOUR_URL`);
     console.log(`Screenshot mode: http://localhost:${PORT}/proxy?url=YOUR_URL&mode=screenshot`);
