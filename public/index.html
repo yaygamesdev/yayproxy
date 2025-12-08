@@ -255,14 +255,6 @@
       height: 16px;
       fill: currentColor;
     }
-
-    .mode-indicator {
-      padding: 0.5rem 1rem;
-      background: #2c2c2c;
-      border-radius: 6px;
-      font-size: 0.85rem;
-      color: var(--accent);
-    }
   </style>
 </head>
 <body>
@@ -294,7 +286,6 @@
       <button id="toggleModeBtn" class="mode-toggle">Switch to Proxy</button>
       <button id="fullscreenBtn" class="fullscreen-btn">Fullscreen</button>
       <button id="goButton">Go</button>
-      <div class="mode-indicator" id="modeIndicator">Mode: Direct IFrame</div>
     </div>
 
     <div class="proxy-frame" id="frameContainer">
@@ -320,7 +311,6 @@
     const loadingOverlay = document.getElementById('loadingOverlay');
     const statusText = document.getElementById('statusText');
     const goButton = document.getElementById('goButton');
-    const modeIndicator = document.getElementById('modeIndicator');
 
     const backBtn = document.getElementById('backBtn');
     const forwardBtn = document.getElementById('forwardBtn');
@@ -330,10 +320,10 @@
     let proxyMode = false;
     let currentUrl = '';
     let loadingTimeouts = [];
+    
     let navigationHistory = [];
     let historyIndex = -1;
     const HOME_URL = 'https://example.com';
-    let clickInterceptorAdded = false;
 
     function clearLoadingTimeouts() {
       loadingTimeouts.forEach(t => clearTimeout(t));
@@ -363,88 +353,6 @@
       updateNavigationButtons();
     }
 
-    function setupClickInterceptor() {
-      if (!proxyMode || clickInterceptorAdded) return;
-      
-      try {
-        const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
-        if (!iframeDoc) return;
-        
-        // Remove any existing listeners
-        const newDoc = iframeDoc.cloneNode(false);
-        
-        // Add comprehensive click interceptor
-        iframeDoc.addEventListener('click', function(e) {
-          let target = e.target;
-          
-          // Traverse up to find if we clicked on or inside a link
-          let maxDepth = 10;
-          while (target && maxDepth > 0) {
-            if (target.tagName === 'A') {
-              // Found a link!
-              const href = target.href || target.getAttribute('href');
-              
-              if (href && href !== '#' && !href.startsWith('javascript:')) {
-                e.preventDefault();
-                e.stopPropagation();
-                e.stopImmediatePropagation();
-                
-                console.log('✅ Intercepted link click:', href);
-                
-                // Navigate through proxy
-                urlInput.value = href;
-                loadProxy();
-                return false;
-              }
-            }
-            target = target.parentElement;
-            maxDepth--;
-          }
-        }, true); // Capture phase to catch early
-        
-        // Intercept form submissions
-        iframeDoc.addEventListener('submit', function(e) {
-          e.preventDefault();
-          e.stopPropagation();
-          
-          const form = e.target;
-          let formUrl = form.action || currentUrl;
-          
-          if (form.method.toLowerCase() === 'get') {
-            const formData = new FormData(form);
-            const params = new URLSearchParams(formData);
-            formUrl += (formUrl.includes('?') ? '&' : '?') + params.toString();
-          }
-          
-          console.log('✅ Intercepted form submission:', formUrl);
-          urlInput.value = formUrl;
-          loadProxy();
-          return false;
-        }, true);
-        
-        // Also intercept window.open attempts
-        try {
-          iframeDoc.defaultView.open = function(url) {
-            console.log('✅ Intercepted window.open:', url);
-            if (url) {
-              urlInput.value = url;
-              loadProxy();
-            }
-            return null;
-          };
-        } catch (e) {
-          console.log('Could not override window.open');
-        }
-        
-        clickInterceptorAdded = true;
-        console.log('✅ Click interceptor installed');
-        
-      } catch (err) {
-        console.log('⚠️ Could not access iframe content (cross-origin):', err.message);
-        clickInterceptorAdded = false;
-      }
-    }
-
     function loadIframe() {
       let url = urlInput.value.trim();
       if (!url) {
@@ -459,6 +367,7 @@
       statusText.textContent = 'Loading iframe...';
       
       mainIframe.src = url;
+      
       addToHistory(url);
       
       mainIframe.onload = () => {
@@ -487,7 +396,6 @@
       loadingOverlay.classList.remove('hidden');
       statusText.textContent = 'Launching browser...';
       goButton.disabled = true;
-      clickInterceptorAdded = false;
 
       loadingTimeouts.push(setTimeout(() => {
         if (goButton.disabled) statusText.textContent = 'Rendering page...';
@@ -509,48 +417,55 @@
         }
         
         const html = await response.text();
-        
-        // Inject additional link interception script into the HTML
-        const injectedScript = `
-          <script>
-            (function() {
-              // Intercept all clicks as early as possible
-              document.addEventListener('click', function(e) {
-                let el = e.target;
-                while (el && el.tagName !== 'A') el = el.parentElement;
-                if (el && el.tagName === 'A' && el.href) {
-                  const href = el.href;
-                  if (href && href !== '#' && !href.startsWith('javascript:')) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log('Link clicked (injected):', href);
-                    window.parent.postMessage({type: 'navigate', url: href}, '*');
-                  }
-                }
-              }, true);
-              
-              // Override window.open
-              window.open = function(url) {
-                if (url) {
-                  window.parent.postMessage({type: 'navigate', url: url}, '*');
-                }
-                return null;
-              };
-            })();
-          </script>
-        `;
-        
-        const modifiedHtml = html.replace('</body>', injectedScript + '</body>');
-        
-        const blob = new Blob([modifiedHtml], { type: 'text/html' });
+        const blob = new Blob([html], { type: 'text/html' });
         const blobUrl = URL.createObjectURL(blob);
         
         mainIframe.src = blobUrl;
         
         mainIframe.onload = () => {
-          setTimeout(() => {
-            setupClickInterceptor();
-          }, 100);
+          if (proxyMode) {
+            try {
+              const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
+              
+              iframeDoc.addEventListener('click', function(e) {
+                let target = e.target;
+                while (target && target.tagName !== 'A') {
+                  target = target.parentElement;
+                }
+                
+                if (target && target.tagName === 'A' && target.href) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  
+                  const clickedUrl = target.href;
+                  console.log('Link clicked:', clickedUrl);
+                  
+                  currentUrl = clickedUrl;
+                  urlInput.value = clickedUrl;
+                  loadProxy();
+                }
+              }, true);
+              
+              iframeDoc.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const form = e.target;
+                let formUrl = form.action || iframeDoc.location.href;
+                
+                if (form.method.toLowerCase() === 'get') {
+                  const formData = new FormData(form);
+                  const params = new URLSearchParams(formData);
+                  formUrl += '?' + params.toString();
+                  
+                  currentUrl = formUrl;
+                  urlInput.value = formUrl;
+                  loadProxy();
+                }
+              }, true);
+              
+            } catch (err) {
+              console.log('Could not access iframe content (cross-origin):', err);
+            }
+          }
           
           setTimeout(() => {
             clearLoadingTimeouts();
@@ -578,19 +493,6 @@
       }
     }
 
-    // Listen for messages from iframe (for injected script)
-    window.addEventListener('message', (e) => {
-      if (e.data && e.data.type === 'navigate' && e.data.url) {
-        console.log('📨 Received navigation message:', e.data.url);
-        urlInput.value = e.data.url;
-        if (proxyMode) {
-          loadProxy();
-        } else {
-          loadIframe();
-        }
-      }
-    });
-
     window.retryLoad = function() {
       loadingOverlay.innerHTML = `
         <div class="spinner"></div>
@@ -603,17 +505,19 @@
 
     function toggleMode() {
       proxyMode = !proxyMode;
-      toggleModeBtn.textContent = proxyMode ? 'Switch to IFrame' : 'Switch to Proxy';
-      modeIndicator.textContent = proxyMode ? 'Mode: Proxy (Links Intercepted)' : 'Mode: Direct IFrame';
-      clickInterceptorAdded = false;
+      toggleModeBtn.textContent = proxyMode ? 'Switch to Iframe' : 'Switch to Proxy';
       
       if (currentUrl) {
-        if (proxyMode) loadProxy();
-        else loadIframe();
+        urlInput.value = currentUrl;
+      }
+      
+      if (proxyMode && currentUrl) {
+        loadProxy();
+      } else if (!proxyMode && currentUrl) {
+        loadIframe();
       }
     }
 
-    // Navigation button handlers
     backBtn.addEventListener('click', () => {
       if (historyIndex > 0) {
         historyIndex--;
