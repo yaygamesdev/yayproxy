@@ -282,7 +282,7 @@
       </div>
 
       <input type="text" id="urlInput" placeholder="Enter URL (e.g. https://example.com)" value="https://example.com" />
-      <input type="text" id="backendUrl" placeholder="Backend URL" value="https://your-app.onrender.com" />
+      <input type="text" id="backendUrl" placeholder="Backend URL" value="https://yayproxy.onrender.com" />
       <button id="toggleModeBtn" class="mode-toggle">Switch to Proxy</button>
       <button id="fullscreenBtn" class="fullscreen-btn">Fullscreen</button>
       <button id="goButton">Go</button>
@@ -389,12 +389,15 @@
       currentUrl = url;
       urlInput.value = url;
 
-      // Clear any existing navigation check interval
+      // Clear any existing navigation check interval and observer
       if (mainIframe._navCheckInterval) {
         clearInterval(mainIframe._navCheckInterval);
       }
+      if (mainIframe._mutationObserver) {
+        mainIframe._mutationObserver.disconnect();
+      }
 
-      const backend = backendUrl.value.trim() || 'http://localhost:3000';
+      const backend = backendUrl.value.trim() || 'https://yayproxy.onrender.com';
       const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=html`;
 
       clearLoadingTimeouts();
@@ -433,34 +436,44 @@
               const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
               const iframeWindow = mainIframe.contentWindow;
               
-              // Intercept ALL clicks, not just <a> tags
+              console.log('🔧 Setting up click interceptors...');
+              
+              // Intercept ALL clicks with multiple strategies
+              
+              // Strategy 1: Capture phase click listener (highest priority)
               iframeDoc.addEventListener('click', function(e) {
-                // First check if it's a regular link
+                console.log('👆 Click captured on:', e.target.tagName, e.target.className, e.target.id);
+                
+                // Check if it's a link
                 let target = e.target;
                 let depth = 0;
                 while (target && depth < 10) {
                   if (target.tagName === 'A' && target.href) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    
-                    const clickedUrl = target.href;
-                    console.log('🔗 Link clicked:', clickedUrl);
-                    
-                    currentUrl = clickedUrl;
-                    urlInput.value = clickedUrl;
-                    loadProxy();
-                    return;
+                    const href = target.href;
+                    if (href && href !== '#' && !href.startsWith('javascript:')) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                      
+                      console.log('🔗 Link clicked:', href);
+                      
+                      currentUrl = href;
+                      urlInput.value = href;
+                      loadProxy();
+                      return false;
+                    }
                   }
                   target = target.parentElement;
                   depth++;
                 }
-                
-                // If not a link, check if element has click handlers that might navigate
-                // Log all clicks to help debug
-                console.log('👆 Click detected on:', e.target.tagName, e.target.className);
               }, true);
               
-              // Monitor for navigation attempts
+              // Strategy 2: Bubble phase listener (catches events that weren't stopped)
+              iframeDoc.addEventListener('click', function(e) {
+                console.log('👆 Click bubbled:', e.target.tagName);
+              }, false);
+              
+              // Strategy 3: Monitor location changes
               let lastUrl = iframeWindow.location.href;
               const checkNavigation = setInterval(() => {
                 try {
@@ -470,7 +483,7 @@
                     clearInterval(checkNavigation);
                     currentUrl = newUrl;
                     urlInput.value = newUrl;
-                    loadProxy();
+                    setTimeout(() => loadProxy(), 100);
                   }
                   lastUrl = newUrl;
                 } catch (err) {
@@ -478,8 +491,77 @@
                 }
               }, 100);
               
+              // Strategy 4: Override navigation methods in iframe
+              try {
+                const originalLocationSetter = Object.getOwnPropertyDescriptor(iframeWindow.Location.prototype, 'href').set;
+                Object.defineProperty(iframeWindow.location, 'href', {
+                  set: function(url) {
+                    console.log('🚫 Intercepted location.href =', url);
+                    if (url && !url.startsWith('blob:')) {
+                      currentUrl = url;
+                      urlInput.value = url;
+                      loadProxy();
+                    }
+                  },
+                  get: function() {
+                    return iframeWindow.location.href;
+                  }
+                });
+              } catch (e) {
+                console.log('Could not override location.href');
+              }
+              
+              // Strategy 5: Intercept anchor clicks before any handlers run
+              const observer = new MutationObserver(() => {
+                iframeDoc.querySelectorAll('a:not([data-intercepted])').forEach(link => {
+                  link.setAttribute('data-intercepted', 'true');
+                  link.addEventListener('click', function(e) {
+                    if (this.href && this.href !== '#' && !this.href.startsWith('javascript:')) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                      console.log('🔗 Direct link intercept:', this.href);
+                      currentUrl = this.href;
+                      urlInput.value = this.href;
+                      loadProxy();
+                    }
+                  }, true);
+                });
+              });
+              
+              observer.observe(iframeDoc.body, {
+                childList: true,
+                subtree: true
+              });
+              
+              // Initial setup for existing links
+              setTimeout(() => {
+                iframeDoc.querySelectorAll('a').forEach(link => {
+                  link.setAttribute('data-intercepted', 'true');
+                  link.addEventListener('click', function(e) {
+                    if (this.href && this.href !== '#' && !this.href.startsWith('javascript:')) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.stopImmediatePropagation();
+                      console.log('🔗 Direct link intercept:', this.href);
+                      currentUrl = this.href;
+                      urlInput.value = this.href;
+                      loadProxy();
+                    }
+                  }, true);
+                });
+              }, 500);
+              
               // Store interval ID to clear later
               mainIframe._navCheckInterval = checkNavigation;
+              mainIframe._mutationObserver = observer;
+              
+              console.log('✅ All click interceptors installed');
+              
+            } catch (err) {
+              console.error('❌ Error setting up interceptors:', err);
+            }
+          }
               
               iframeDoc.addEventListener('submit', function(e) {
                 e.preventDefault();
