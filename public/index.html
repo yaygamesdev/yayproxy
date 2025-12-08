@@ -389,6 +389,11 @@
       currentUrl = url;
       urlInput.value = url;
 
+      // Clear any existing navigation check interval
+      if (mainIframe._navCheckInterval) {
+        clearInterval(mainIframe._navCheckInterval);
+      }
+
       const backend = backendUrl.value.trim() || 'http://localhost:3000';
       const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=html`;
 
@@ -426,25 +431,55 @@
           if (proxyMode) {
             try {
               const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
+              const iframeWindow = mainIframe.contentWindow;
               
+              // Intercept ALL clicks, not just <a> tags
               iframeDoc.addEventListener('click', function(e) {
+                // First check if it's a regular link
                 let target = e.target;
-                while (target && target.tagName !== 'A') {
+                let depth = 0;
+                while (target && depth < 10) {
+                  if (target.tagName === 'A' && target.href) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const clickedUrl = target.href;
+                    console.log('🔗 Link clicked:', clickedUrl);
+                    
+                    currentUrl = clickedUrl;
+                    urlInput.value = clickedUrl;
+                    loadProxy();
+                    return;
+                  }
                   target = target.parentElement;
+                  depth++;
                 }
                 
-                if (target && target.tagName === 'A' && target.href) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  
-                  const clickedUrl = target.href;
-                  console.log('Link clicked:', clickedUrl);
-                  
-                  currentUrl = clickedUrl;
-                  urlInput.value = clickedUrl;
-                  loadProxy();
-                }
+                // If not a link, check if element has click handlers that might navigate
+                // Log all clicks to help debug
+                console.log('👆 Click detected on:', e.target.tagName, e.target.className);
               }, true);
+              
+              // Monitor for navigation attempts
+              let lastUrl = iframeWindow.location.href;
+              const checkNavigation = setInterval(() => {
+                try {
+                  const newUrl = iframeWindow.location.href;
+                  if (newUrl !== lastUrl && !newUrl.startsWith('blob:')) {
+                    console.log('🔄 Navigation detected:', newUrl);
+                    clearInterval(checkNavigation);
+                    currentUrl = newUrl;
+                    urlInput.value = newUrl;
+                    loadProxy();
+                  }
+                  lastUrl = newUrl;
+                } catch (err) {
+                  // Cross-origin error, ignore
+                }
+              }, 100);
+              
+              // Store interval ID to clear later
+              mainIframe._navCheckInterval = checkNavigation;
               
               iframeDoc.addEventListener('submit', function(e) {
                 e.preventDefault();
@@ -572,6 +607,19 @@
         e.preventDefault();
         urlInput.focus();
         urlInput.select();
+      }
+    });
+
+    // Listen for navigation messages from iframe (from injected script)
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'navigate' && e.data.url) {
+        console.log('📨 Received navigation request from iframe:', e.data.url);
+        urlInput.value = e.data.url;
+        if (proxyMode) {
+          loadProxy();
+        } else {
+          loadIframe();
+        }
       }
     });
   </script>
