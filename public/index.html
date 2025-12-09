@@ -258,7 +258,7 @@
   </style>
 </head>
 <body>
-  <header>🌐 Yayproxy</header>
+  <header>🌐 Yayproxy <span style="font-size: 0.5em; opacity: 0.7;">v1.2</span></header>
   <nav>
     <a href="https://yaygames.vercel.app/home.html">YayGames Home</a>
     <a href="#">About</a>
@@ -396,6 +396,9 @@
       if (mainIframe._mutationObserver) {
         mainIframe._mutationObserver.disconnect();
       }
+      if (mainIframe._domObserver) {
+        mainIframe._domObserver.disconnect();
+      }
 
       const backend = backendUrl.value.trim() || 'https://yayproxy.onrender.com';
       const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=html`;
@@ -475,21 +478,56 @@
               
               // Strategy 2: Monitor location changes (faster polling for button clicks)
               let lastUrl = iframeWindow.location.href;
+              let lastPathname = iframeWindow.location.pathname;
+              let lastHash = iframeWindow.location.hash;
+              
               const checkNavigation = setInterval(() => {
                 try {
                   const newUrl = iframeWindow.location.href;
-                  if (newUrl !== lastUrl && !newUrl.startsWith('blob:')) {
-                    console.log('🔄 Navigation detected:', newUrl);
-                    clearInterval(checkNavigation);
-                    currentUrl = newUrl;
-                    urlInput.value = newUrl;
-                    setTimeout(() => loadProxy(), 50);
+                  const newPathname = iframeWindow.location.pathname;
+                  const newHash = iframeWindow.location.hash;
+                  
+                  // Check if URL, pathname, or hash changed
+                  if (newUrl !== lastUrl || newPathname !== lastPathname || newHash !== lastHash) {
+                    console.log('🔄 Navigation detected!');
+                    console.log('  Old URL:', lastUrl);
+                    console.log('  New URL:', newUrl);
+                    console.log('  Old Path:', lastPathname, 'New Path:', newPathname);
+                    console.log('  Old Hash:', lastHash, 'New Hash:', newHash);
+                    
+                    if (!newUrl.startsWith('blob:')) {
+                      clearInterval(checkNavigation);
+                      currentUrl = newUrl;
+                      urlInput.value = newUrl;
+                      setTimeout(() => loadProxy(), 50);
+                    }
                   }
+                  
                   lastUrl = newUrl;
+                  lastPathname = newPathname;
+                  lastHash = newHash;
                 } catch (err) {
                   // Cross-origin error, ignore
                 }
               }, 50); // Check every 50ms for faster response
+              
+              // Strategy 3: Watch for DOM changes (SPA content updates)
+              let contentChangeTimeout;
+              const domObserver = new MutationObserver((mutations) => {
+                // Debounce: only log if changes keep happening
+                clearTimeout(contentChangeTimeout);
+                contentChangeTimeout = setTimeout(() => {
+                  console.log('📝 DOM content changed - SPA may have navigated without URL change');
+                }, 500);
+              });
+              
+              domObserver.observe(iframeDoc.body, {
+                childList: true,
+                subtree: true,
+                attributes: false
+              });
+              
+              mainIframe._domObserver = domObserver;
               
               // Store interval ID
               mainIframe._navCheckInterval = checkNavigation;
