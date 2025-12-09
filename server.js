@@ -1,18 +1,15 @@
-// Puppeteer-based Proxy Server for JavaScript-heavy sites
-// Install: npm install express cors node-fetch puppeteer-core @sparticuz/chromium puppeteer-extra puppeteer-extra-plugin-stealth
-
+// Full URL Rewriting Proxy Server
+// This rewrites ALL URLs to go through the proxy, avoiding CORS issues
 const express = require('express');
 const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Determine environment and load appropriate Puppeteer with stealth
 const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
 let puppeteer;
 let chromium;
 
-// Use puppeteer-extra with stealth plugin
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
@@ -20,49 +17,36 @@ puppeteerExtra.use(StealthPlugin());
 if (isProduction) {
     puppeteer = require('puppeteer-core');
     chromium = require('@sparticuz/chromium');
-    console.log('🚀 Running in PRODUCTION mode with @sparticuz/chromium + STEALTH');
+    console.log('🚀 Running in PRODUCTION mode');
 } else {
     try {
         puppeteer = require('puppeteer');
-        console.log('🔧 Running in DEVELOPMENT mode with puppeteer + STEALTH');
+        console.log('🔧 Running in DEVELOPMENT mode');
     } catch (e) {
         puppeteer = require('puppeteer-core');
-        console.log('🔧 Running in DEVELOPMENT mode with puppeteer-core + STEALTH');
+        console.log('🔧 Running in DEVELOPMENT mode with puppeteer-core');
     }
 }
 
-// Enable CORS
 app.use(cors());
 app.use(express.static('public'));
 
-// Browser instance (reuse for performance)
 let browser = null;
 
 async function getBrowser() {
     if (!browser) {
-        const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
-        
         if (isProduction) {
-            console.log('🚀 Launching stealth browser in production mode...');
-            try {
-                browser = await puppeteerExtra.launch({
-                    args: [
-                        ...chromium.args,
-                        '--disable-web-security',
-                        '--disable-features=IsolateOrigins,site-per-process'
-                    ],
-                    defaultViewport: chromium.defaultViewport,
-                    executablePath: await chromium.executablePath(),
-                    headless: chromium.headless,
-                });
-                console.log('✅ Production stealth browser launched successfully');
-            } catch (error) {
-                console.error('❌ Failed to launch production browser:', error.message);
-                throw error;
-            }
+            browser = await puppeteerExtra.launch({
+                args: [
+                    ...chromium.args,
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
+                ],
+                defaultViewport: chromium.defaultViewport,
+                executablePath: await chromium.executablePath(),
+                headless: chromium.headless,
+            });
         } else {
-            console.log('🔧 Launching stealth browser in development mode...');
-            
             const chromePaths = [
                 '/usr/bin/google-chrome',
                 '/usr/bin/chromium-browser',
@@ -76,54 +60,37 @@ async function getBrowser() {
             for (const path of chromePaths) {
                 if (fs.existsSync(path)) {
                     executablePath = path;
-                    console.log(`Found Chrome at: ${path}`);
                     break;
                 }
             }
 
-            if (!executablePath) {
-                console.log('No system Chrome found, using bundled Chromium');
-            }
-
-            try {
-                browser = await puppeteerExtra.launch({
-                    headless: 'new',
-                    executablePath: executablePath,
-                    args: [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-accelerated-2d-canvas',
-                        '--no-first-run',
-                        '--no-zygote',
-                        '--disable-gpu',
-                        '--disable-web-security',
-                        '--disable-features=IsolateOrigins,site-per-process'
-                    ]
-                });
-                console.log('✅ Development stealth browser launched successfully');
-            } catch (error) {
-                console.error('❌ Failed to launch browser:', error.message);
-                throw error;
-            }
+            browser = await puppeteerExtra.launch({
+                headless: 'new',
+                executablePath: executablePath,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
+                ]
+            });
         }
     }
     return browser;
 }
 
-// Proxy endpoint with full rendering
+// Main proxy endpoint that rewrites ALL URLs
 app.get('/proxy', async (req, res) => {
-    const url = req.query.url;
-    const mode = req.query.mode || 'html';
+    const targetUrl = req.query.url;
     
-    if (!url) {
+    if (!targetUrl) {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
 
-    // Validate and clean URL
     let cleanUrl;
     try {
-        cleanUrl = new URL(url);
+        cleanUrl = new URL(targetUrl);
         cleanUrl.pathname = cleanUrl.pathname.replace(/\/\//g, '/');
         cleanUrl = cleanUrl.toString();
     } catch (e) {
@@ -136,37 +103,14 @@ app.get('/proxy', async (req, res) => {
         const browser = await getBrowser();
         page = await browser.newPage();
 
-        // Set larger viewport for better rendering
         await page.setViewport({ width: 1920, height: 1080 });
-
-        // Set realistic user agent
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // Set extra headers to appear more like a real browser
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        });
-
-        // Intelligent request interception - only block truly unnecessary resources
+        // Minimal request interception - only block obvious ads
         await page.setRequestInterception(true);
         page.on('request', (request) => {
             const url = request.url();
-            const resourceType = request.resourceType();
-            
-            // Only block specific known ad/tracking domains, allow everything else
-            const blockedDomains = [
-                'doubleclick.net',
-                'googleadservices.com',
-                'googlesyndication.com',
-                'google-analytics.com',
-                'googletagmanager.com',
-                'facebook.com/tr',
-                'analytics.twitter.com'
-            ];
+            const blockedDomains = ['doubleclick.net', 'googleadservices.com'];
             
             if (blockedDomains.some(domain => url.includes(domain))) {
                 request.abort();
@@ -175,239 +119,126 @@ app.get('/proxy', async (req, res) => {
             }
         });
 
-        // Navigate with multiple fallback strategies
         console.log(`🌐 Loading: ${cleanUrl}`);
         
         try {
-            // First attempt: networkidle0 (most complete)
-            await page.goto(cleanUrl, { 
-                waitUntil: 'networkidle0',
-                timeout: 45000
-            });
-            console.log('✅ Loaded with networkidle0');
+            await page.goto(cleanUrl, { waitUntil: 'networkidle0', timeout: 45000 });
         } catch (e1) {
-            console.log('⚠️ networkidle0 failed, trying networkidle2...');
             try {
-                await page.goto(cleanUrl, { 
-                    waitUntil: 'networkidle2',
-                    timeout: 45000
-                });
-                console.log('✅ Loaded with networkidle2');
+                await page.goto(cleanUrl, { waitUntil: 'networkidle2', timeout: 45000 });
             } catch (e2) {
-                console.log('⚠️ networkidle2 failed, trying load...');
-                try {
-                    await page.goto(cleanUrl, { 
-                        waitUntil: 'load',
-                        timeout: 30000
-                    });
-                    console.log('✅ Loaded with load event');
-                } catch (e3) {
-                    console.log('⚠️ load failed, trying domcontentloaded...');
-                    await page.goto(cleanUrl, { 
-                        waitUntil: 'domcontentloaded',
-                        timeout: 20000
-                    });
-                    console.log('✅ Loaded with domcontentloaded');
-                }
+                await page.goto(cleanUrl, { waitUntil: 'load', timeout: 30000 });
             }
         }
 
-        // Wait for dynamic content - longer wait for complex sites
-        await new Promise(resolve => setTimeout(resolve, 3000));
-
-        // Try to wait for common content indicators
-        try {
-            await page.waitForSelector('body', { timeout: 5000 });
-        } catch (e) {
-            console.log('Body element check skipped');
-        }
-
-        // Execute JavaScript to ensure everything is loaded
-        await page.evaluate(() => {
-            // Trigger any lazy-loaded content
-            window.scrollTo(0, document.body.scrollHeight / 2);
-            window.scrollTo(0, 0);
-        });
-
-        // Additional wait after scrolling
         await new Promise(resolve => setTimeout(resolve, 2000));
 
-        if (mode === 'screenshot') {
-            const screenshot = await page.screenshot({ 
-                fullPage: true,
-                type: 'png'
-            });
-            res.setHeader('Content-Type', 'image/png');
-            res.send(screenshot);
-        } else if (mode === 'pdf') {
-            const pdf = await page.pdf({ 
-                format: 'A4',
-                printBackground: true
-            });
-            res.setHeader('Content-Type', 'application/pdf');
-            res.send(pdf);
-        } else {
-            // Get the fully rendered HTML
-            const html = await page.content();
+        const html = await page.content();
+        
+        // Get the proxy base URL
+        const proxyBase = `${req.protocol}://${req.get('host')}/proxy?url=`;
+        const targetOrigin = new URL(cleanUrl).origin;
+        
+        // Rewrite all URLs to go through the proxy
+        let modifiedHtml = html;
+        
+        // Remove CSP
+        modifiedHtml = modifiedHtml.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '');
+        
+        // Function to create proxy URL
+        function makeProxyUrl(url) {
+            try {
+                const absolute = new URL(url, cleanUrl).href;
+                return `${proxyBase}${encodeURIComponent(absolute)}`;
+            } catch (e) {
+                return url;
+            }
+        }
+        
+        // Rewrite script sources
+        modifiedHtml = modifiedHtml.replace(/(<script[^>]+src=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
+            if (p2.startsWith('data:') || p2.startsWith('blob:')) return match;
+            return p1 + makeProxyUrl(p2) + p3;
+        });
+        
+        // Rewrite link hrefs (CSS, etc)
+        modifiedHtml = modifiedHtml.replace(/(<link[^>]+href=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
+            if (p2.startsWith('data:') || p2.startsWith('blob:') || p2.startsWith('#')) return match;
+            return p1 + makeProxyUrl(p2) + p3;
+        });
+        
+        // Rewrite image sources
+        modifiedHtml = modifiedHtml.replace(/(<img[^>]+src=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
+            if (p2.startsWith('data:') || p2.startsWith('blob:')) return match;
+            return p1 + makeProxyUrl(p2) + p3;
+        });
+        
+        // Add base tag
+        if (!modifiedHtml.includes('<base')) {
+            modifiedHtml = modifiedHtml.replace(/<head>/i, `<head><base href="${cleanUrl}">`);
+        }
+        
+        // Inject comprehensive proxy script
+        const injectionScript = `
+        <script>
+        (function() {
+            console.log('🔧 Full proxy mode active');
+            const proxyBase = '${proxyBase}';
+            const targetOrigin = '${targetOrigin}';
+            const currentProxiedUrl = '${cleanUrl}';
             
-            // Enhanced HTML modification
-            let modifiedHtml = html;
-            
-            // CRITICAL: Remove all CSP (Content Security Policy) headers from meta tags
-            modifiedHtml = modifiedHtml.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '');
-            modifiedHtml = modifiedHtml.replace(/<meta[^>]*name=["']content-security-policy["'][^>]*>/gi, '');
-            
-            // Add base tag if not present
-            if (!modifiedHtml.includes('<base')) {
-                const baseTag = `<base href="${cleanUrl}">`;
-                modifiedHtml = modifiedHtml.replace(/<head>/i, `<head>${baseTag}`);
+            function makeProxyUrl(url) {
+                if (!url || url.startsWith('data:') || url.startsWith('blob:') || url === '#') return url;
+                try {
+                    const absolute = new URL(url, currentProxiedUrl).href;
+                    return proxyBase + encodeURIComponent(absolute);
+                } catch (e) {
+                    return url;
+                }
             }
             
-            // Inject comprehensive fixing script
-            const injectionScript = `
-            <script>
-            (function() {
-                console.log('🔧 Yayproxy injection script loaded');
-                const baseUrl = '${cleanUrl}';
-                
-                // Remove CSP meta tags if any were added after page load
-                document.querySelectorAll('meta[http-equiv="Content-Security-Policy"], meta[name="content-security-policy"]').forEach(el => el.remove());
-                
-                function makeAbsolute(url) {
-                    if (!url || url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('#') || url.startsWith('blob:')) {
-                        return url;
-                    }
-                    try {
-                        return new URL(url, baseUrl).href;
-                    } catch (e) {
-                        return url;
+            // Override fetch
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options = {}) {
+                const proxiedUrl = makeProxyUrl(url);
+                console.log('🌐 Fetch:', url, '→', proxiedUrl);
+                return originalFetch(proxiedUrl, options);
+            };
+            
+            // Override XMLHttpRequest
+            const originalOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url, ...args) {
+                const proxiedUrl = makeProxyUrl(url);
+                console.log('🌐 XHR:', url, '→', proxiedUrl);
+                return originalOpen.call(this, method, proxiedUrl, ...args);
+            };
+            
+            // Intercept link clicks
+            document.addEventListener('click', function(e) {
+                let el = e.target;
+                while (el && el.tagName !== 'A') el = el.parentElement;
+                if (el && el.tagName === 'A' && el.href) {
+                    if (!el.href.startsWith('javascript:') && !el.href.startsWith('#')) {
+                        e.preventDefault();
+                        const newUrl = new URL(el.href).searchParams.get('url') || el.href;
+                        window.location.href = proxyBase + encodeURIComponent(newUrl);
                     }
                 }
-                
-                // Override fetch to use absolute URLs
-                const originalFetch = window.fetch;
-                window.fetch = function(url, options) {
-                    const absoluteUrl = makeAbsolute(url);
-                    console.log('🌐 Fetch:', url, '→', absoluteUrl);
-                    return originalFetch(absoluteUrl, options);
-                };
-                
-                // Override XMLHttpRequest
-                const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url, ...args) {
-                    const absoluteUrl = makeAbsolute(url);
-                    console.log('🌐 XHR:', url, '→', absoluteUrl);
-                    return originalOpen.call(this, method, absoluteUrl, ...args);
-                };
-                
-                // Override window.location to prevent navigation
-                const originalLocation = window.location;
-                Object.defineProperty(window, 'location', {
-                    get: function() {
-                        return originalLocation;
-                    },
-                    set: function(url) {
-                        console.log('🚫 Blocked window.location =', url);
-                        if (window.parent !== window) {
-                            window.parent.postMessage({
-                                type: 'navigate',
-                                url: makeAbsolute(url)
-                            }, '*');
-                        }
-                    }
-                });
-                
-                // Override window.open
-                window.open = function(url, target, features) {
-                    console.log('🚫 Blocked window.open:', url);
-                    if (url && window.parent !== window) {
-                        window.parent.postMessage({
-                            type: 'navigate',
-                            url: makeAbsolute(url)
-                        }, '*');
-                    }
-                    return null;
-                };
-                
-                // Intercept History API
-                const originalPushState = history.pushState;
-                const originalReplaceState = history.replaceState;
-                
-                history.pushState = function(state, title, url) {
-                    console.log('📍 History pushState:', url);
-                    if (url && window.parent !== window) {
-                        const absoluteUrl = makeAbsolute(url);
-                        window.parent.postMessage({
-                            type: 'navigate',
-                            url: absoluteUrl
-                        }, '*');
-                    }
-                    return originalPushState.apply(this, arguments);
-                };
-                
-                history.replaceState = function(state, title, url) {
-                    console.log('📍 History replaceState:', url);
-                    return originalReplaceState.apply(this, arguments);
-                };
-                
-                // Fix URLs on load
-                function fixUrls() {
-                    document.querySelectorAll('img[src]').forEach(img => {
-                        const oldSrc = img.getAttribute('src');
-                        const newSrc = makeAbsolute(oldSrc);
-                        if (oldSrc !== newSrc) {
-                            img.src = newSrc;
-                        }
-                    });
-                    
-                    document.querySelectorAll('link[href]').forEach(link => {
-                        const oldHref = link.getAttribute('href');
-                        const newHref = makeAbsolute(oldHref);
-                        if (oldHref !== newHref) {
-                            link.href = newHref;
-                        }
-                    });
-                    
-                    document.querySelectorAll('script[src]').forEach(script => {
-                        const oldSrc = script.getAttribute('src');
-                        const newSrc = makeAbsolute(oldSrc);
-                        if (oldSrc !== newSrc && !script.hasAttribute('data-fixed')) {
-                            script.setAttribute('data-fixed', 'true');
-                            const newScript = document.createElement('script');
-                            newScript.src = newSrc;
-                            script.parentNode.replaceChild(newScript, script);
-                        }
-                    });
-                }
-                
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', fixUrls);
-                } else {
-                    fixUrls();
-                }
-                
-                // Watch for dynamically added elements
-                const observer = new MutationObserver(fixUrls);
-                observer.observe(document.body, { childList: true, subtree: true });
-                
-                console.log('✅ Yayproxy fixes applied');
-            })();
-            </script>
-            `;
+            }, true);
             
-            modifiedHtml = modifiedHtml.replace('</head>', injectionScript + '</head>');
-            
-            res.setHeader('Content-Type', 'text/html; charset=utf-8');
-            res.setHeader('X-Proxied-URL', cleanUrl);
-            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-            // Don't send CSP headers
-            res.removeHeader('Content-Security-Policy');
-            res.removeHeader('X-Content-Security-Policy');
-            res.removeHeader('X-WebKit-CSP');
-            res.send(modifiedHtml);
-            
-            console.log(`✅ Successfully proxied: ${cleanUrl}`);
-        }
+            console.log('✅ Full proxy injection complete');
+        })();
+        </script>
+        `;
+        
+        modifiedHtml = modifiedHtml.replace('</head>', injectionScript + '</head>');
+        
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('X-Proxied-URL', cleanUrl);
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(modifiedHtml);
+        
+        console.log(`✅ Successfully proxied: ${cleanUrl}`);
 
     } catch (error) {
         console.error('❌ Proxy error:', error);
@@ -416,21 +247,14 @@ app.get('/proxy', async (req, res) => {
         let statusCode = 500;
         
         if (error.name === 'TimeoutError') {
-            errorMessage = 'Page load timeout. The website took too long to load or may be blocking automated access.';
+            errorMessage = 'Page load timeout.';
             statusCode = 504;
-        } else if (error.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
-            errorMessage = 'Website not found. Check if the URL is correct.';
-            statusCode = 404;
-        } else if (error.message.includes('net::ERR_CONNECTION_REFUSED')) {
-            errorMessage = 'Connection refused. The website may be down or blocking access.';
-            statusCode = 503;
         }
         
         res.status(statusCode).json({ 
             error: 'Failed to fetch URL', 
             message: errorMessage,
-            url: url,
-            details: error.message
+            url: targetUrl
         });
     } finally {
         if (page) {
@@ -439,12 +263,12 @@ app.get('/proxy', async (req, res) => {
     }
 });
 
-// Simple proxy endpoint (fallback without Puppeteer)
-app.get('/proxy-simple', async (req, res) => {
+// Proxy for individual resources (scripts, CSS, images, etc)
+app.get('/resource', async (req, res) => {
     const url = req.query.url;
     
     if (!url) {
-        return res.status(400).json({ error: 'URL parameter is required' });
+        return res.status(400).send('URL required');
     }
 
     try {
@@ -455,50 +279,39 @@ app.get('/proxy-simple', async (req, res) => {
             }
         });
 
-        const content = await response.text();
-        res.setHeader('Content-Type', response.headers.get('content-type') || 'text/html');
-        res.send(content);
+        const contentType = response.headers.get('content-type');
+        const buffer = await response.buffer();
+        
+        res.setHeader('Content-Type', contentType || 'application/octet-stream');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(buffer);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).send('Failed to fetch resource');
     }
 });
 
-// Health check
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok', 
-        message: 'Puppeteer proxy server is running',
-        puppeteer: browser ? 'connected' : 'not initialized',
-        environment: isProduction ? 'production' : 'development'
+        message: 'Full rewriting proxy server running',
+        browser: browser ? 'connected' : 'not initialized'
     });
 });
 
-// Root
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/public/index.html');
 });
 
-// Cleanup on exit
 process.on('SIGINT', async () => {
-    console.log('🛑 Shutting down...');
-    if (browser) {
-        await browser.close();
-    }
+    if (browser) await browser.close();
     process.exit();
 });
 
 process.on('SIGTERM', async () => {
-    console.log('🛑 Shutting down...');
-    if (browser) {
-        await browser.close();
-    }
+    if (browser) await browser.close();
     process.exit();
 });
 
 app.listen(PORT, () => {
-    console.log(`✅ Puppeteer proxy server running on http://localhost:${PORT}`);
-    console.log(`Environment: ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}`);
-    console.log(`Proxy endpoint: http://localhost:${PORT}/proxy?url=YOUR_URL`);
-    console.log(`Screenshot mode: http://localhost:${PORT}/proxy?url=YOUR_URL&mode=screenshot`);
-    console.log(`PDF mode: http://localhost:${PORT}/proxy?url=YOUR_URL&mode=pdf`);
+    console.log(`✅ Full rewriting proxy server running on port ${PORT}`);
 });
