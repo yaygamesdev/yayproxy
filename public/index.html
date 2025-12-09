@@ -438,12 +438,14 @@
               
               console.log('🔧 Setting up click interceptors...');
               
-              // Strategy 1: Capture phase click listener
+              // Strategy 1: Capture phase click listener (but don't prevent default for buttons)
               iframeDoc.addEventListener('click', function(e) {
                 console.log('👆 Click captured on:', e.target.tagName, e.target.className, e.target.id);
                 
                 let target = e.target;
                 let depth = 0;
+                let foundLink = false;
+                
                 while (target && depth < 10) {
                   if (target.tagName === 'A' && target.href) {
                     const href = target.href;
@@ -457,15 +459,21 @@
                       currentUrl = href;
                       urlInput.value = href;
                       loadProxy();
+                      foundLink = true;
                       return false;
                     }
                   }
                   target = target.parentElement;
                   depth++;
                 }
+                
+                // If it's a button or clickable element, let it execute but watch for navigation
+                if (!foundLink && (e.target.tagName === 'BUTTON' || e.target.onclick || e.target.getAttribute('onclick'))) {
+                  console.log('🎯 Button/clickable element - allowing click through, monitoring for navigation...');
+                }
               }, true);
               
-              // Strategy 2: Monitor location changes
+              // Strategy 2: Monitor location changes (faster polling for button clicks)
               let lastUrl = iframeWindow.location.href;
               const checkNavigation = setInterval(() => {
                 try {
@@ -475,13 +483,13 @@
                     clearInterval(checkNavigation);
                     currentUrl = newUrl;
                     urlInput.value = newUrl;
-                    setTimeout(() => loadProxy(), 100);
+                    setTimeout(() => loadProxy(), 50);
                   }
                   lastUrl = newUrl;
                 } catch (err) {
                   // Cross-origin error, ignore
                 }
-              }, 100);
+              }, 50); // Check every 50ms for faster response
               
               // Store interval ID
               mainIframe._navCheckInterval = checkNavigation;
