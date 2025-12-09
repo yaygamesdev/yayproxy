@@ -258,7 +258,7 @@
   </style>
 </head>
 <body>
-  <header>🌐 Yayproxy <span style="font-size: 0.5em; opacity: 0.7;">v1.2</span></header>
+  <header>🌐 Yayproxy <span style="font-size: 0.5em; opacity: 0.7;">v2.0 - Full Rewrite</span></header>
   <nav>
     <a href="https://yaygames.vercel.app/home.html">YayGames Home</a>
     <a href="#">About</a>
@@ -389,7 +389,7 @@
       currentUrl = url;
       urlInput.value = url;
 
-      // Clear any existing navigation check interval and observer
+      // Clear any existing observers
       if (mainIframe._navCheckInterval) {
         clearInterval(mainIframe._navCheckInterval);
       }
@@ -401,11 +401,11 @@
       }
 
       const backend = backendUrl.value.trim() || 'https://yayproxy.onrender.com';
-      const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}&mode=html`;
+      const proxyUrl = `${backend}/proxy?url=${encodeURIComponent(url)}`;
 
       clearLoadingTimeouts();
       loadingOverlay.classList.remove('hidden');
-      statusText.textContent = 'Launching browser...';
+      statusText.textContent = 'Loading through proxy...';
       goButton.disabled = true;
 
       loadingTimeouts.push(setTimeout(() => {
@@ -417,152 +417,34 @@
       }, 10000));
 
       loadingTimeouts.push(setTimeout(() => {
-        if (goButton.disabled) statusText.textContent = 'Almost there... (site may be slow)';
+        if (goButton.disabled) statusText.textContent = 'Almost there...';
       }, 30000));
 
-      try {
-        const response = await fetch(proxyUrl);
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.message || `Proxy failed: ${response.statusText}`);
-        }
-        
-        const html = await response.text();
-        const blob = new Blob([html], { type: 'text/html' });
-        const blobUrl = URL.createObjectURL(blob);
-        
-        mainIframe.src = blobUrl;
-        
-        mainIframe.onload = () => {
-          if (proxyMode) {
-            try {
-              const iframeDoc = mainIframe.contentDocument || mainIframe.contentWindow.document;
-              const iframeWindow = mainIframe.contentWindow;
-              
-              console.log('🔧 Setting up click interceptors...');
-              
-              // Strategy 1: Capture phase click listener (but don't prevent default for buttons)
-              iframeDoc.addEventListener('click', function(e) {
-                console.log('👆 Click captured on:', e.target.tagName, e.target.className, e.target.id);
-                
-                let target = e.target;
-                let depth = 0;
-                let foundLink = false;
-                
-                while (target && depth < 10) {
-                  if (target.tagName === 'A' && target.href) {
-                    const href = target.href;
-                    if (href && href !== '#' && !href.startsWith('javascript:')) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      e.stopImmediatePropagation();
-                      
-                      console.log('🔗 Link clicked:', href);
-                      
-                      currentUrl = href;
-                      urlInput.value = href;
-                      loadProxy();
-                      foundLink = true;
-                      return false;
-                    }
-                  }
-                  target = target.parentElement;
-                  depth++;
-                }
-                
-                // If it's a button or clickable element, let it execute but watch for navigation
-                if (!foundLink && (e.target.tagName === 'BUTTON' || e.target.onclick || e.target.getAttribute('onclick'))) {
-                  console.log('🎯 Button/clickable element - allowing click through, monitoring for navigation...');
-                }
-              }, true);
-              
-              // Strategy 2: Monitor location changes (faster polling for button clicks)
-              let lastUrl = iframeWindow.location.href;
-              let lastPathname = iframeWindow.location.pathname;
-              let lastHash = iframeWindow.location.hash;
-              
-              const checkNavigation = setInterval(() => {
-                try {
-                  const newUrl = iframeWindow.location.href;
-                  const newPathname = iframeWindow.location.pathname;
-                  const newHash = iframeWindow.location.hash;
-                  
-                  // Check if URL, pathname, or hash changed
-                  if (newUrl !== lastUrl || newPathname !== lastPathname || newHash !== lastHash) {
-                    console.log('🔄 Navigation detected!');
-                    console.log('  Old URL:', lastUrl);
-                    console.log('  New URL:', newUrl);
-                    console.log('  Old Path:', lastPathname, 'New Path:', newPathname);
-                    console.log('  Old Hash:', lastHash, 'New Hash:', newHash);
-                    
-                    if (!newUrl.startsWith('blob:')) {
-                      clearInterval(checkNavigation);
-                      currentUrl = newUrl;
-                      urlInput.value = newUrl;
-                      setTimeout(() => loadProxy(), 50);
-                    }
-                  }
-                  
-                  lastUrl = newUrl;
-                  lastPathname = newPathname;
-                  lastHash = newHash;
-                } catch (err) {
-                  // Cross-origin error, ignore
-                }
-              }, 50); // Check every 50ms for faster response
-              
-              // Strategy 3: Watch for DOM changes (SPA content updates)
-              let contentChangeTimeout;
-              const domObserver = new MutationObserver((mutations) => {
-                // Debounce: only log if changes keep happening
-                clearTimeout(contentChangeTimeout);
-                contentChangeTimeout = setTimeout(() => {
-                  console.log('📝 DOM content changed - SPA may have navigated without URL change');
-                }, 500);
-              });
-              
-              domObserver.observe(iframeDoc.body, {
-                childList: true,
-                subtree: true,
-                attributes: false
-              });
-              
-              mainIframe._domObserver = domObserver;
-              
-              // Store interval ID
-              mainIframe._navCheckInterval = checkNavigation;
-              
-              console.log('✅ Click interceptors installed');
-              
-            } catch (err) {
-              console.error('❌ Error setting up interceptors:', err);
-            }
-          }
-          
-          setTimeout(() => {
-            clearLoadingTimeouts();
-            loadingOverlay.classList.add('hidden');
-            goButton.disabled = false;
-            addToHistory(url);
-          }, 500);
-        };
-
-      } catch (err) {
-        console.error('Proxy error:', err);
+      // NEW APPROACH: Load directly from proxy URL (no blob!)
+      mainIframe.src = proxyUrl;
+      
+      mainIframe.onload = () => {
+        clearLoadingTimeouts();
+        loadingOverlay.classList.add('hidden');
+        goButton.disabled = false;
+        addToHistory(url);
+        console.log('✅ Page loaded through full proxy');
+      };
+      
+      mainIframe.onerror = () => {
         clearLoadingTimeouts();
         loadingOverlay.innerHTML = `
           <div class="error">
             <strong>❌ Failed to load page</strong><br><br>
-            <strong>Error:</strong> ${err.message}<br><br>
             <strong>Troubleshooting:</strong><br>
             • Check that the backend URL is correct<br>
-            • Some sites may block automated browsers<br>
+            • The site may be blocking proxies<br>
             • Try a different website<br><br>
             <button class="retry-btn" onclick="retryLoad()">↻ Retry</button>
           </div>
         `;
         goButton.disabled = false;
-      }
+      };
     }
 
     window.retryLoad = function() {
