@@ -253,23 +253,28 @@ app.get('/proxy', async (req, res) => {
             // Enhanced HTML modification
             let modifiedHtml = html;
             
+            // CRITICAL: Remove all CSP (Content Security Policy) headers from meta tags
+            modifiedHtml = modifiedHtml.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '');
+            modifiedHtml = modifiedHtml.replace(/<meta[^>]*name=["']content-security-policy["'][^>]*>/gi, '');
+            
             // Add base tag if not present
             if (!modifiedHtml.includes('<base')) {
                 const baseTag = `<base href="${cleanUrl}">`;
                 modifiedHtml = modifiedHtml.replace(/<head>/i, `<head>${baseTag}`);
             }
             
-            // Inject script to fix relative URLs and prevent navigation
+            // Inject comprehensive fixing script
             const injectionScript = `
             <script>
             (function() {
-                // Fix any remaining relative URLs
+                console.log('🔧 Yayproxy injection script loaded');
                 const baseUrl = '${cleanUrl}';
-                const base = new URL(baseUrl);
                 
-                // Function to make URLs absolute
+                // Remove CSP meta tags if any were added after page load
+                document.querySelectorAll('meta[http-equiv="Content-Security-Policy"], meta[name="content-security-policy"]').forEach(el => el.remove());
+                
                 function makeAbsolute(url) {
-                    if (!url || url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('#')) {
+                    if (!url || url.startsWith('data:') || url.startsWith('javascript:') || url.startsWith('#') || url.startsWith('blob:')) {
                         return url;
                     }
                     try {
@@ -279,32 +284,42 @@ app.get('/proxy', async (req, res) => {
                     }
                 }
                 
+                // Override fetch to use absolute URLs
+                const originalFetch = window.fetch;
+                window.fetch = function(url, options) {
+                    const absoluteUrl = makeAbsolute(url);
+                    console.log('🌐 Fetch:', url, '→', absoluteUrl);
+                    return originalFetch(absoluteUrl, options);
+                };
+                
+                // Override XMLHttpRequest
+                const originalOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url, ...args) {
+                    const absoluteUrl = makeAbsolute(url);
+                    console.log('🌐 XHR:', url, '→', absoluteUrl);
+                    return originalOpen.call(this, method, absoluteUrl, ...args);
+                };
+                
                 // Override window.location to prevent navigation
                 const originalLocation = window.location;
-                let isNavigating = false;
-                
                 Object.defineProperty(window, 'location', {
                     get: function() {
                         return originalLocation;
                     },
                     set: function(url) {
-                        if (!isNavigating) {
-                            console.log('🚫 Blocked window.location navigation to:', url);
-                            // Instead of navigating, you could send message to parent
-                            if (window.parent !== window) {
-                                window.parent.postMessage({
-                                    type: 'navigate',
-                                    url: makeAbsolute(url)
-                                }, '*');
-                            }
+                        console.log('🚫 Blocked window.location =', url);
+                        if (window.parent !== window) {
+                            window.parent.postMessage({
+                                type: 'navigate',
+                                url: makeAbsolute(url)
+                            }, '*');
                         }
                     }
                 });
                 
                 // Override window.open
-                const originalOpen = window.open;
                 window.open = function(url, target, features) {
-                    console.log('🚫 Blocked window.open to:', url);
+                    console.log('🚫 Blocked window.open:', url);
                     if (url && window.parent !== window) {
                         window.parent.postMessage({
                             type: 'navigate',
@@ -335,35 +350,47 @@ app.get('/proxy', async (req, res) => {
                     return originalReplaceState.apply(this, arguments);
                 };
                 
-                // Wait for DOM to be ready
+                // Fix URLs on load
+                function fixUrls() {
+                    document.querySelectorAll('img[src]').forEach(img => {
+                        const oldSrc = img.getAttribute('src');
+                        const newSrc = makeAbsolute(oldSrc);
+                        if (oldSrc !== newSrc) {
+                            img.src = newSrc;
+                        }
+                    });
+                    
+                    document.querySelectorAll('link[href]').forEach(link => {
+                        const oldHref = link.getAttribute('href');
+                        const newHref = makeAbsolute(oldHref);
+                        if (oldHref !== newHref) {
+                            link.href = newHref;
+                        }
+                    });
+                    
+                    document.querySelectorAll('script[src]').forEach(script => {
+                        const oldSrc = script.getAttribute('src');
+                        const newSrc = makeAbsolute(oldSrc);
+                        if (oldSrc !== newSrc && !script.hasAttribute('data-fixed')) {
+                            script.setAttribute('data-fixed', 'true');
+                            const newScript = document.createElement('script');
+                            newScript.src = newSrc;
+                            script.parentNode.replaceChild(newScript, script);
+                        }
+                    });
+                }
+                
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', fixUrls);
                 } else {
                     fixUrls();
                 }
                 
-                function fixUrls() {
-                    // Fix images
-                    document.querySelectorAll('img[src]').forEach(img => {
-                        img.src = makeAbsolute(img.src);
-                    });
-                    
-                    // Fix links
-                    document.querySelectorAll('link[href]').forEach(link => {
-                        link.href = makeAbsolute(link.href);
-                    });
-                    
-                    // Fix scripts
-                    document.querySelectorAll('script[src]').forEach(script => {
-                        const oldSrc = script.src;
-                        const newSrc = makeAbsolute(oldSrc);
-                        if (oldSrc !== newSrc) {
-                            script.src = newSrc;
-                        }
-                    });
-                }
+                // Watch for dynamically added elements
+                const observer = new MutationObserver(fixUrls);
+                observer.observe(document.body, { childList: true, subtree: true });
                 
-                console.log('🔧 Proxy URL fixer and navigation interceptor loaded');
+                console.log('✅ Yayproxy fixes applied');
             })();
             </script>
             `;
@@ -373,6 +400,10 @@ app.get('/proxy', async (req, res) => {
             res.setHeader('Content-Type', 'text/html; charset=utf-8');
             res.setHeader('X-Proxied-URL', cleanUrl);
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            // Don't send CSP headers
+            res.removeHeader('Content-Security-Policy');
+            res.removeHeader('X-Content-Security-Policy');
+            res.removeHeader('X-WebKit-CSP');
             res.send(modifiedHtml);
             
             console.log(`✅ Successfully proxied: ${cleanUrl}`);
