@@ -80,7 +80,7 @@ async function getBrowser() {
     return browser;
 }
 
-// Main proxy endpoint that rewrites ALL URLs
+// Main proxy endpoint that handles both HTML pages and resources
 app.get('/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     
@@ -97,6 +97,40 @@ app.get('/proxy', async (req, res) => {
         return res.status(400).json({ error: 'Invalid URL format' });
     }
 
+    // Determine if this is a resource or HTML page based on file extension
+    const urlPath = cleanUrl.split('?')[0];
+    const isResource = /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico|json|xml)$/i.test(urlPath);
+
+    // If it's a resource (JS, CSS, image, etc), fetch it directly
+    if (isResource) {
+        try {
+            console.log(`📦 Fetching resource: ${cleanUrl}`);
+            const fetch = require('node-fetch');
+            const response = await fetch(cleanUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Referer': new URL(cleanUrl).origin
+                }
+            });
+
+            const contentType = response.headers.get('content-type');
+            const buffer = await response.buffer();
+            
+            res.setHeader('Content-Type', contentType || 'application/octet-stream');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+            res.send(buffer);
+            
+            console.log(`✅ Resource served: ${cleanUrl}`);
+            return;
+        } catch (error) {
+            console.error(`❌ Failed to fetch resource: ${cleanUrl}`, error.message);
+            res.status(500).send('Failed to fetch resource');
+            return;
+        }
+    }
+
+    // Otherwise, it's an HTML page - use Puppeteer
     let page = null;
 
     try {
@@ -119,7 +153,7 @@ app.get('/proxy', async (req, res) => {
             }
         });
 
-        console.log(`🌐 Loading: ${cleanUrl}`);
+        console.log(`🌐 Loading HTML page: ${cleanUrl}`);
         
         try {
             await page.goto(cleanUrl, { waitUntil: 'networkidle0', timeout: 45000 });
@@ -158,13 +192,17 @@ app.get('/proxy', async (req, res) => {
         // Rewrite script sources
         modifiedHtml = modifiedHtml.replace(/(<script[^>]+src=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
             if (p2.startsWith('data:') || p2.startsWith('blob:')) return match;
-            return p1 + makeProxyUrl(p2) + p3;
+            const newUrl = makeProxyUrl(p2);
+            console.log(`  Rewriting script: ${p2} → ${newUrl}`);
+            return p1 + newUrl + p3;
         });
         
         // Rewrite link hrefs (CSS, etc)
         modifiedHtml = modifiedHtml.replace(/(<link[^>]+href=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
             if (p2.startsWith('data:') || p2.startsWith('blob:') || p2.startsWith('#')) return match;
-            return p1 + makeProxyUrl(p2) + p3;
+            const newUrl = makeProxyUrl(p2);
+            console.log(`  Rewriting link: ${p2} → ${newUrl}`);
+            return p1 + newUrl + p3;
         });
         
         // Rewrite image sources
@@ -182,7 +220,7 @@ app.get('/proxy', async (req, res) => {
         const injectionScript = `
         <script>
         (function() {
-            console.log('🔧 Full proxy mode active');
+            console.log('🔧 Full proxy mode active v2.0');
             const proxyBase = '${proxyBase}';
             const targetOrigin = '${targetOrigin}';
             const currentProxiedUrl = '${cleanUrl}';
@@ -220,8 +258,13 @@ app.get('/proxy', async (req, res) => {
                 if (el && el.tagName === 'A' && el.href) {
                     if (!el.href.startsWith('javascript:') && !el.href.startsWith('#')) {
                         e.preventDefault();
-                        const newUrl = new URL(el.href).searchParams.get('url') || el.href;
-                        window.location.href = proxyBase + encodeURIComponent(newUrl);
+                        console.log('🔗 Link clicked:', el.href);
+                        // Check if URL is already proxied
+                        if (el.href.includes('/proxy?url=')) {
+                            window.location.href = el.href;
+                        } else {
+                            window.location.href = proxyBase + encodeURIComponent(el.href);
+                        }
                     }
                 }
             }, true);
@@ -238,7 +281,7 @@ app.get('/proxy', async (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.send(modifiedHtml);
         
-        console.log(`✅ Successfully proxied: ${cleanUrl}`);
+        console.log(`✅ Successfully proxied HTML: ${cleanUrl}`);
 
     } catch (error) {
         console.error('❌ Proxy error:', error);
@@ -260,33 +303,6 @@ app.get('/proxy', async (req, res) => {
         if (page) {
             await page.close();
         }
-    }
-});
-
-// Proxy for individual resources (scripts, CSS, images, etc)
-app.get('/resource', async (req, res) => {
-    const url = req.query.url;
-    
-    if (!url) {
-        return res.status(400).send('URL required');
-    }
-
-    try {
-        const fetch = require('node-fetch');
-        const response = await fetch(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-
-        const contentType = response.headers.get('content-type');
-        const buffer = await response.buffer();
-        
-        res.setHeader('Content-Type', contentType || 'application/octet-stream');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.send(buffer);
-    } catch (error) {
-        res.status(500).send('Failed to fetch resource');
     }
 });
 
