@@ -29,6 +29,8 @@ if (isProduction) {
 }
 
 app.use(cors());
+app.use(express.json()); // Parse JSON bodies for POST requests
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 app.use(express.static('public'));
 
 // Trust proxy - important for getting correct protocol on Render
@@ -85,6 +87,15 @@ async function getBrowser() {
 
 // Main proxy endpoint that handles both HTML pages and resources
 app.get('/proxy', async (req, res) => {
+    await handleProxyRequest(req, res);
+});
+
+// Handle POST requests too (for analytics, API calls, etc)
+app.post('/proxy', async (req, res) => {
+    await handleProxyRequest(req, res);
+});
+
+async function handleProxyRequest(req, res) {
     const targetUrl = req.query.url;
     
     if (!targetUrl) {
@@ -132,7 +143,10 @@ app.get('/proxy', async (req, res) => {
         try {
             console.log(`📦 Fetching ${mightBeAPI ? 'API' : 'resource'}: ${cleanUrl}`);
             const fetch = require('node-fetch');
-            const response = await fetch(cleanUrl, {
+            
+            // Prepare fetch options
+            const fetchOptions = {
+                method: req.method, // Use same method (GET or POST)
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Referer': new URL(cleanUrl).origin,
@@ -141,7 +155,15 @@ app.get('/proxy', async (req, res) => {
                     'Accept-Encoding': 'gzip, deflate, br'
                 },
                 timeout: 10000
-            });
+            };
+            
+            // If POST, forward the body
+            if (req.method === 'POST' && req.body) {
+                fetchOptions.body = JSON.stringify(req.body);
+                fetchOptions.headers['Content-Type'] = 'application/json';
+            }
+            
+            const response = await fetch(cleanUrl, fetchOptions);
 
             if (!response.ok) {
                 console.error(`❌ Resource fetch failed: ${response.status} ${response.statusText}`);
@@ -175,6 +197,14 @@ app.get('/proxy', async (req, res) => {
                     res.send('/* Resource returned HTML instead of CSS */');
                     return;
                 }
+            }
+            
+            // Block analytics tracking pixels/GIFs from being treated as scripts
+            if (contentType && (contentType.includes('image/gif') || contentType.includes('image/')) && 
+                (cleanUrl.includes('doubleclick') || cleanUrl.includes('google-analytics') || cleanUrl.includes('googleadservices'))) {
+                console.log('🚫 Blocking tracking image:', cleanUrl);
+                res.status(204).send(); // No content
+                return;
             }
             
             res.setHeader('Content-Type', contentType || 'application/octet-stream');
