@@ -29,11 +29,10 @@ if (isProduction) {
 }
 
 app.use(cors());
-app.use(express.json()); // Parse JSON bodies for POST requests
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// Trust proxy - important for getting correct protocol on Render
 app.set('trust proxy', 1);
 
 let browser = null;
@@ -85,12 +84,10 @@ async function getBrowser() {
     return browser;
 }
 
-// Main proxy endpoint that handles both HTML pages and resources
 app.get('/proxy', async (req, res) => {
     await handleProxyRequest(req, res);
 });
 
-// Handle POST requests too (for analytics, API calls, etc)
 app.post('/proxy', async (req, res) => {
     await handleProxyRequest(req, res);
 });
@@ -111,11 +108,9 @@ async function handleProxyRequest(req, res) {
         return res.status(400).json({ error: 'Invalid URL format' });
     }
 
-    // Determine if this is a resource or HTML page based on file extension
     const urlPath = cleanUrl.split('?')[0];
     const hasFileExtension = /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico|json|xml|webp|mp4|webm)$/i.test(urlPath);
     
-    // Check URL patterns that indicate resources even without extensions
     const isKnownResourcePath = 
         urlPath.endsWith('/js') || 
         urlPath.includes('/gtag/js') ||
@@ -129,7 +124,6 @@ async function handleProxyRequest(req, res) {
     
     const isResource = hasFileExtension || isKnownResourcePath;
     
-    // Check if it's likely an API endpoint (no extension but not HTML)
     const hasNoExtension = !urlPath.split('/').pop().includes('.');
     const mightBeAPI = hasNoExtension && (
         urlPath.includes('/api/') || 
@@ -138,15 +132,13 @@ async function handleProxyRequest(req, res) {
         cleanUrl.includes('cloudmoonapp.com/api')
     );
 
-    // If it's a resource (JS, CSS, image, etc) OR an API endpoint, fetch it directly
     if (isResource || mightBeAPI) {
         try {
             console.log(`📦 Fetching ${mightBeAPI ? 'API' : 'resource'}: ${cleanUrl}`);
             const fetch = require('node-fetch');
             
-            // Prepare fetch options
             const fetchOptions = {
-                method: req.method, // Use same method (GET or POST)
+                method: req.method,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'Referer': new URL(cleanUrl).origin,
@@ -157,7 +149,6 @@ async function handleProxyRequest(req, res) {
                 timeout: 10000
             };
             
-            // If POST, forward the body
             if (req.method === 'POST' && req.body) {
                 fetchOptions.body = JSON.stringify(req.body);
                 fetchOptions.headers['Content-Type'] = 'application/json';
@@ -167,7 +158,6 @@ async function handleProxyRequest(req, res) {
 
             if (!response.ok) {
                 console.error(`❌ Resource fetch failed: ${response.status} ${response.statusText}`);
-                // Return empty content based on type instead of error
                 const ext = urlPath.split('.').pop().toLowerCase();
                 if (ext === 'js') {
                     res.setHeader('Content-Type', 'application/javascript');
@@ -184,7 +174,6 @@ async function handleProxyRequest(req, res) {
             const contentType = response.headers.get('content-type');
             const buffer = await response.buffer();
             
-            // If we got HTML but expected JS/CSS, return empty instead
             if (contentType && contentType.includes('text/html')) {
                 if (cleanUrl.includes('gtag/js') || cleanUrl.includes('.js')) {
                     console.log('⚠️ Received HTML for JS resource, returning empty JS');
@@ -199,11 +188,10 @@ async function handleProxyRequest(req, res) {
                 }
             }
             
-            // Block analytics tracking pixels/GIFs from being treated as scripts
             if (contentType && (contentType.includes('image/gif') || contentType.includes('image/')) && 
                 (cleanUrl.includes('doubleclick') || cleanUrl.includes('google-analytics') || cleanUrl.includes('googleadservices'))) {
                 console.log('🚫 Blocking tracking image:', cleanUrl);
-                res.status(204).send(); // No content
+                res.status(204).send();
                 return;
             }
             
@@ -217,7 +205,6 @@ async function handleProxyRequest(req, res) {
         } catch (error) {
             console.error(`❌ Failed to fetch ${mightBeAPI ? 'API' : 'resource'}: ${cleanUrl}`, error.message);
             
-            // Return empty content instead of HTML error
             const ext = urlPath.split('.').pop().toLowerCase();
             if (ext === 'js') {
                 res.setHeader('Content-Type', 'application/javascript');
@@ -235,7 +222,6 @@ async function handleProxyRequest(req, res) {
         }
     }
 
-    // Otherwise, it's an HTML page - use Puppeteer
     let page = null;
 
     try {
@@ -245,7 +231,6 @@ async function handleProxyRequest(req, res) {
         await page.setViewport({ width: 1920, height: 1080 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // Minimal request interception - only block obvious ads
         await page.setRequestInterception(true);
         page.on('request', (request) => {
             const url = request.url();
@@ -274,18 +259,16 @@ async function handleProxyRequest(req, res) {
 
         const html = await page.content();
         
-        // Get the proxy base URL - ALWAYS use https in production
-        const protocol = isProduction ? 'https' : req.protocol;
+        const protocol = (req.headers['x-forwarded-proto'] === 'https' || req.get('host').includes('onrender.com')) ? 'https' : req.protocol;
         const proxyBase = `${protocol}://${req.get('host')}/proxy?url=`;
         const targetOrigin = new URL(cleanUrl).origin;
         
-        // Rewrite all URLs to go through the proxy
+        console.log(`Using proxy base: ${proxyBase}`);
+        
         let modifiedHtml = html;
         
-        // Remove CSP
         modifiedHtml = modifiedHtml.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '');
         
-        // Function to create proxy URL
         function makeProxyUrl(url) {
             try {
                 const absolute = new URL(url, cleanUrl).href;
@@ -295,7 +278,6 @@ async function handleProxyRequest(req, res) {
             }
         }
         
-        // Rewrite script sources
         modifiedHtml = modifiedHtml.replace(/(<script[^>]+src=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
             if (p2.startsWith('data:') || p2.startsWith('blob:')) return match;
             const newUrl = makeProxyUrl(p2);
@@ -303,7 +285,6 @@ async function handleProxyRequest(req, res) {
             return p1 + newUrl + p3;
         });
         
-        // Rewrite link hrefs (CSS, etc)
         modifiedHtml = modifiedHtml.replace(/(<link[^>]+href=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
             if (p2.startsWith('data:') || p2.startsWith('blob:') || p2.startsWith('#')) return match;
             const newUrl = makeProxyUrl(p2);
@@ -311,22 +292,19 @@ async function handleProxyRequest(req, res) {
             return p1 + newUrl + p3;
         });
         
-        // Rewrite image sources
         modifiedHtml = modifiedHtml.replace(/(<img[^>]+src=["'])([^"']+)(["'])/gi, (match, p1, p2, p3) => {
             if (p2.startsWith('data:') || p2.startsWith('blob:')) return match;
             return p1 + makeProxyUrl(p2) + p3;
         });
         
-        // Add base tag
         if (!modifiedHtml.includes('<base')) {
             modifiedHtml = modifiedHtml.replace(/<head>/i, `<head><base href="${cleanUrl}">`);
         }
         
-        // Inject comprehensive proxy script
         const injectionScript = `
         <script>
         (function() {
-            console.log('🔧 Full proxy mode active v2.0');
+            console.log('🔧 Full proxy mode active v2.2');
             const proxyBase = '${proxyBase}';
             const targetOrigin = '${targetOrigin}';
             const currentProxiedUrl = '${cleanUrl}';
@@ -341,7 +319,6 @@ async function handleProxyRequest(req, res) {
                 }
             }
             
-            // Override fetch
             const originalFetch = window.fetch;
             window.fetch = function(url, options = {}) {
                 const proxiedUrl = makeProxyUrl(url);
@@ -349,7 +326,6 @@ async function handleProxyRequest(req, res) {
                 return originalFetch(proxiedUrl, options);
             };
             
-            // Override XMLHttpRequest
             const originalOpen = XMLHttpRequest.prototype.open;
             XMLHttpRequest.prototype.open = function(method, url, ...args) {
                 const proxiedUrl = makeProxyUrl(url);
@@ -357,7 +333,6 @@ async function handleProxyRequest(req, res) {
                 return originalOpen.call(this, method, proxiedUrl, ...args);
             };
             
-            // Intercept link clicks
             document.addEventListener('click', function(e) {
                 let el = e.target;
                 while (el && el.tagName !== 'A') el = el.parentElement;
@@ -365,7 +340,6 @@ async function handleProxyRequest(req, res) {
                     if (!el.href.startsWith('javascript:') && !el.href.startsWith('#')) {
                         e.preventDefault();
                         console.log('🔗 Link clicked:', el.href);
-                        // Check if URL is already proxied
                         if (el.href.includes('/proxy?url=')) {
                             window.location.href = el.href;
                         } else {
@@ -410,7 +384,7 @@ async function handleProxyRequest(req, res) {
             await page.close();
         }
     }
-});
+}
 
 app.get('/health', (req, res) => {
     res.json({ 
