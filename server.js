@@ -102,9 +102,23 @@ app.get('/proxy', async (req, res) => {
 
     // Determine if this is a resource or HTML page based on file extension
     const urlPath = cleanUrl.split('?')[0];
-    const isResource = /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico|json|xml|webp|mp4|webm)$/i.test(urlPath);
+    const hasFileExtension = /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico|json|xml|webp|mp4|webm)$/i.test(urlPath);
     
-    // Also check if it's likely an API endpoint (no extension but not HTML)
+    // Check URL patterns that indicate resources even without extensions
+    const isKnownResourcePath = 
+        urlPath.endsWith('/js') || 
+        urlPath.includes('/gtag/js') ||
+        urlPath.includes('.js?') ||
+        urlPath.includes('.css?') ||
+        urlPath.includes('/api/') ||
+        urlPath.includes('/_next/') ||
+        cleanUrl.includes('googletagmanager.com') ||
+        cleanUrl.includes('google-analytics.com') ||
+        cleanUrl.includes('doubleclick.net');
+    
+    const isResource = hasFileExtension || isKnownResourcePath;
+    
+    // Check if it's likely an API endpoint (no extension but not HTML)
     const hasNoExtension = !urlPath.split('/').pop().includes('.');
     const mightBeAPI = hasNoExtension && (
         urlPath.includes('/api/') || 
@@ -147,6 +161,21 @@ app.get('/proxy', async (req, res) => {
 
             const contentType = response.headers.get('content-type');
             const buffer = await response.buffer();
+            
+            // If we got HTML but expected JS/CSS, return empty instead
+            if (contentType && contentType.includes('text/html')) {
+                if (cleanUrl.includes('gtag/js') || cleanUrl.includes('.js')) {
+                    console.log('⚠️ Received HTML for JS resource, returning empty JS');
+                    res.setHeader('Content-Type', 'application/javascript');
+                    res.send('// Resource returned HTML instead of JS');
+                    return;
+                } else if (cleanUrl.includes('.css')) {
+                    console.log('⚠️ Received HTML for CSS resource, returning empty CSS');
+                    res.setHeader('Content-Type', 'text/css');
+                    res.send('/* Resource returned HTML instead of CSS */');
+                    return;
+                }
+            }
             
             res.setHeader('Content-Type', contentType || 'application/octet-stream');
             res.setHeader('Access-Control-Allow-Origin', '*');
