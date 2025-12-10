@@ -31,6 +31,9 @@ if (isProduction) {
 app.use(cors());
 app.use(express.static('public'));
 
+// Trust proxy - important for getting correct protocol on Render
+app.set('trust proxy', 1);
+
 let browser = null;
 
 async function getBrowser() {
@@ -169,8 +172,9 @@ app.get('/proxy', async (req, res) => {
 
         const html = await page.content();
         
-        // Get the proxy base URL
-        const proxyBase = `${req.protocol}://${req.get('host')}/proxy?url=`;
+        // Get the proxy base URL - ALWAYS use https in production
+        const protocol = isProduction ? 'https' : req.protocol;
+        const proxyBase = `${protocol}://${req.get('host')}/proxy?url=`;
         const targetOrigin = new URL(cleanUrl).origin;
         
         // Rewrite all URLs to go through the proxy
