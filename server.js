@@ -102,19 +102,48 @@ app.get('/proxy', async (req, res) => {
 
     // Determine if this is a resource or HTML page based on file extension
     const urlPath = cleanUrl.split('?')[0];
-    const isResource = /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico|json|xml)$/i.test(urlPath);
+    const isResource = /\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|ico|json|xml|webp|mp4|webm)$/i.test(urlPath);
+    
+    // Also check if it's likely an API endpoint (no extension but not HTML)
+    const hasNoExtension = !urlPath.split('/').pop().includes('.');
+    const mightBeAPI = hasNoExtension && (
+        urlPath.includes('/api/') || 
+        urlPath.includes('/graphql') || 
+        urlPath.includes('/_next/data/') ||
+        cleanUrl.includes('cloudmoonapp.com/api')
+    );
 
-    // If it's a resource (JS, CSS, image, etc), fetch it directly
-    if (isResource) {
+    // If it's a resource (JS, CSS, image, etc) OR an API endpoint, fetch it directly
+    if (isResource || mightBeAPI) {
         try {
-            console.log(`📦 Fetching resource: ${cleanUrl}`);
+            console.log(`📦 Fetching ${mightBeAPI ? 'API' : 'resource'}: ${cleanUrl}`);
             const fetch = require('node-fetch');
             const response = await fetch(cleanUrl, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Referer': new URL(cleanUrl).origin
-                }
+                    'Referer': new URL(cleanUrl).origin,
+                    'Accept': mightBeAPI ? 'application/json, text/plain, */*' : '*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br'
+                },
+                timeout: 10000
             });
+
+            if (!response.ok) {
+                console.error(`❌ Resource fetch failed: ${response.status} ${response.statusText}`);
+                // Return empty content based on type instead of error
+                const ext = urlPath.split('.').pop().toLowerCase();
+                if (ext === 'js') {
+                    res.setHeader('Content-Type', 'application/javascript');
+                    res.send('// Resource failed to load');
+                } else if (ext === 'css') {
+                    res.setHeader('Content-Type', 'text/css');
+                    res.send('/* Resource failed to load */');
+                } else {
+                    res.status(response.status).send(`Resource unavailable: ${response.statusText}`);
+                }
+                return;
+            }
 
             const contentType = response.headers.get('content-type');
             const buffer = await response.buffer();
@@ -124,11 +153,25 @@ app.get('/proxy', async (req, res) => {
             res.setHeader('Cache-Control', 'public, max-age=3600');
             res.send(buffer);
             
-            console.log(`✅ Resource served: ${cleanUrl}`);
+            console.log(`✅ ${mightBeAPI ? 'API' : 'Resource'} served: ${cleanUrl}`);
             return;
         } catch (error) {
-            console.error(`❌ Failed to fetch resource: ${cleanUrl}`, error.message);
-            res.status(500).send('Failed to fetch resource');
+            console.error(`❌ Failed to fetch ${mightBeAPI ? 'API' : 'resource'}: ${cleanUrl}`, error.message);
+            
+            // Return empty content instead of HTML error
+            const ext = urlPath.split('.').pop().toLowerCase();
+            if (ext === 'js') {
+                res.setHeader('Content-Type', 'application/javascript');
+                res.send('// Resource failed to load: ' + error.message);
+            } else if (ext === 'css') {
+                res.setHeader('Content-Type', 'text/css');
+                res.send('/* Resource failed to load: ' + error.message + ' */');
+            } else if (mightBeAPI) {
+                res.setHeader('Content-Type', 'application/json');
+                res.status(500).json({ error: 'API request failed', message: error.message });
+            } else {
+                res.status(500).send('Failed to fetch resource');
+            }
             return;
         }
     }
