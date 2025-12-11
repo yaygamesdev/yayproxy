@@ -36,19 +36,57 @@ app.use(express.static('public'));
 app.set('trust proxy', 1);
 
 let browser = null;
+let browserInitializing = false;
+let browserQueue = [];
 
 async function getBrowser() {
-    if (!browser) {
+    // If browser is already initializing, wait for it
+    if (browserInitializing) {
+        console.log('⏳ Waiting for browser to initialize...');
+        await new Promise(resolve => {
+            const checkInterval = setInterval(() => {
+                if (!browserInitializing && browser) {
+                    clearInterval(checkInterval);
+                    resolve();
+                }
+            }, 100);
+        });
+        return browser;
+    }
+
+    // If browser exists and is connected, return it
+    if (browser && browser.isConnected()) {
+        return browser;
+    }
+
+    // Initialize browser
+    browserInitializing = true;
+    console.log('🚀 Initializing browser...');
+
+    try {
         if (isProduction) {
+            // Set executable permissions
+            await chromium.executablePath().then(path => {
+                const { execSync } = require('child_process');
+                try {
+                    execSync(`chmod +x ${path}`);
+                } catch (e) {
+                    console.log('Could not chmod executable');
+                }
+            });
+
             browser = await puppeteerExtra.launch({
                 args: [
                     ...chromium.args,
                     '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--single-process',
+                    '--no-zygote'
                 ],
                 defaultViewport: chromium.defaultViewport,
                 executablePath: await chromium.executablePath(),
                 headless: chromium.headless,
+                ignoreHTTPSErrors: true
             });
         } else {
             const chromePaths = [
@@ -76,12 +114,22 @@ async function getBrowser() {
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process'
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--single-process',
+                    '--no-zygote'
                 ]
             });
         }
+
+        console.log('✅ Browser initialized successfully');
+        browserInitializing = false;
+        return browser;
+    } catch (error) {
+        console.error('❌ Failed to initialize browser:', error);
+        browserInitializing = false;
+        browser = null;
+        throw error;
     }
-    return browser;
 }
 
 app.get('/proxy', async (req, res) => {
